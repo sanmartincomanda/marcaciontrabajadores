@@ -554,14 +554,22 @@ function App() {
                 automaticamente si abre o cierra el turno.
               </p>
 
-              <div className="clock-display">
-                <span>{clockDate}</span>
-                <strong>{clockTime}</strong>
+              <div className="marking-badges">
+                <span>Modo kiosco</span>
+                <span>Lectura por cedula</span>
+                <span>Control en tiempo real</span>
               </div>
 
-              <div className="terminal-strip">
-                <span>{Object.keys(activeRecords).length} turno(s) abiertos</span>
-                <span>{payroll.processedRecords.length} registros esta semana</span>
+              <div className="marking-dashboard">
+                <div className="clock-display">
+                  <span>{clockDate}</span>
+                  <strong>{clockTime}</strong>
+                </div>
+
+                <div className="terminal-strip">
+                  <span>{Object.keys(activeRecords).length} turno(s) abiertos</span>
+                  <span>{payroll.processedRecords.length} registros esta semana</span>
+                </div>
               </div>
             </div>
 
@@ -571,25 +579,41 @@ function App() {
                 <span className="scanner-meta">Escaner listo</span>
               </div>
 
-              <form className="scanner-form" onSubmit={handleClockScan}>
-                <label className="scanner-label" htmlFor="document-scan">
-                  Cedula
-                </label>
-                <input
-                  id="document-scan"
-                  ref={scanInputRef}
-                  className="scanner-input"
-                  type="text"
-                  autoComplete="off"
-                  inputMode="text"
-                  placeholder="Escanea tu cedula"
-                  value={scanValue}
-                  onChange={(event) => setScanValue(event.target.value.toUpperCase())}
-                />
-                <button type="submit" className="scan-button">
-                  Registrar marcacion
-                </button>
-              </form>
+              <div className="scanner-stage">
+                <div className="scanner-stage-head">
+                  <span>Zona de lectura</span>
+                  <span>Sistema activo</span>
+                </div>
+
+                <form className="scanner-form" onSubmit={handleClockScan}>
+                  <label className="scanner-label" htmlFor="document-scan">
+                    Cedula
+                  </label>
+                  <div className="scanner-input-shell">
+                    <span className="scanner-corner scanner-corner-top-left" aria-hidden="true" />
+                    <span className="scanner-corner scanner-corner-top-right" aria-hidden="true" />
+                    <span className="scanner-corner scanner-corner-bottom-left" aria-hidden="true" />
+                    <span className="scanner-corner scanner-corner-bottom-right" aria-hidden="true" />
+                    <span className="scanner-line" aria-hidden="true" />
+                    <input
+                      id="document-scan"
+                      ref={scanInputRef}
+                      className="scanner-input"
+                      type="text"
+                      autoComplete="off"
+                      inputMode="text"
+                      placeholder="ESCANEA TU CEDULA"
+                      value={scanValue}
+                      onChange={(event) =>
+                        setScanValue(event.target.value.toUpperCase())
+                      }
+                    />
+                  </div>
+                  <button type="submit" className="scan-button">
+                    Registrar marcacion
+                  </button>
+                </form>
+              </div>
 
               <div
                 className={
