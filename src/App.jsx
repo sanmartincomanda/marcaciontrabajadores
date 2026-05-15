@@ -3,7 +3,6 @@ import { BrowserMultiFormatReader } from "@zxing/browser";
 import { BarcodeFormat, DecodeHintType, NotFoundException } from "@zxing/library";
 import {
   collaboratorByDocumentId,
-  collaboratorMap,
   collaborators,
   normalizeDocumentId,
 } from "./data/collaborators";
@@ -126,6 +125,43 @@ function describeCameraError(error) {
   }
 
   return "No pude iniciar la cámara. Revisa permisos o vuelve a intentarlo.";
+}
+
+async function optimizeCameraTrackForSmallBarcode(videoElement) {
+  const stream = videoElement?.srcObject;
+  const track = stream?.getVideoTracks?.()?.[0];
+
+  if (!track || typeof track.getCapabilities !== "function") {
+    return false;
+  }
+
+  const capabilities = track.getCapabilities();
+  const advanced = [];
+
+  if (
+    Array.isArray(capabilities.focusMode) &&
+    capabilities.focusMode.includes("continuous")
+  ) {
+    advanced.push({ focusMode: "continuous" });
+  }
+
+  if (capabilities.zoom) {
+    const targetZoom = Math.min(
+      capabilities.zoom.max,
+      Math.max(capabilities.zoom.min, 2)
+    );
+
+    if (Number.isFinite(targetZoom)) {
+      advanced.push({ zoom: targetZoom });
+    }
+  }
+
+  if (advanced.length === 0) {
+    return false;
+  }
+
+  await track.applyConstraints({ advanced });
+  return true;
 }
 
 function App() {
@@ -255,63 +291,10 @@ function App() {
   const selectedSlipDays = payroll.dailySummaries.filter(
     (day) => day.employeeId === selectedSlipSummary?.collaborator.id
   );
-  const recentMovements = records
-    .flatMap((record) => {
-      const collaborator = collaboratorMap[record.employeeId];
-      if (!collaborator) {
-        return [];
-      }
-
-      const movementItems = [
-        {
-          id: `${record.id}-entrada`,
-          collaborator,
-          movement: "Entrada",
-          timestamp:
-            record.createdAt ??
-            new Date(`${record.date}T${record.checkIn || "00:00"}:00`).toISOString(),
-          timeLabel: record.checkIn || "--:--",
-          dateLabel: formatDateLabel(record.date),
-        },
-      ];
-
-      if (record.checkOut) {
-        movementItems.push({
-          id: `${record.id}-salida`,
-          collaborator,
-          movement: "Salida",
-          timestamp:
-            record.updatedAt ??
-            new Date(`${record.date}T${record.checkOut}:00`).toISOString(),
-          timeLabel: record.checkOut,
-          dateLabel: formatDateLabel(record.date),
-        });
-      }
-
-      return movementItems;
-    })
-    .sort(
-      (left, right) =>
-        new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime()
-    )
-    .slice(0, 8);
-  const openShiftRows = Object.values(activeRecords)
-    .map((record) => ({
-      collaborator: collaboratorMap[record.employeeId],
-      dateLabel: formatDateLabel(record.date),
-      timeLabel: record.checkIn || "--:--",
-    }))
-    .filter((entry) => entry.collaborator);
   const clockTime = new Date(now).toLocaleTimeString("es-NI", {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
-  });
-  const clockDate = new Date(now).toLocaleDateString("es-NI", {
-    weekday: "long",
-    day: "2-digit",
-    month: "long",
-    year: "numeric",
   });
   const isMarkingMode = selectedTab === "marcacion";
 
@@ -541,14 +524,15 @@ function App() {
         if (!cameraReaderRef.current) {
           const hints = new Map();
           hints.set(DecodeHintType.POSSIBLE_FORMATS, [
-            BarcodeFormat.PDF_417,
             BarcodeFormat.CODE_128,
             BarcodeFormat.CODE_39,
             BarcodeFormat.CODABAR,
             BarcodeFormat.ITF,
+            BarcodeFormat.PDF_417,
           ]);
+          hints.set(DecodeHintType.TRY_HARDER, true);
           cameraReaderRef.current = new BrowserMultiFormatReader(hints, {
-            delayBetweenScanAttempts: 180,
+            delayBetweenScanAttempts: 120,
             delayBetweenScanSuccess: 900,
           });
         }
@@ -558,8 +542,10 @@ function App() {
             audio: false,
             video: {
               facingMode: { ideal: "environment" },
-              width: { ideal: 1280 },
-              height: { ideal: 720 },
+              aspectRatio: { ideal: 1.7777777778 },
+              width: { ideal: 1920 },
+              height: { ideal: 1080 },
+              resizeMode: { ideal: "crop-and-scale" },
             },
           },
           cameraVideoRef.current,
@@ -588,6 +574,22 @@ function App() {
         cameraLockRef.current = false;
         setCameraStatus(
           "Cámara activa. Apunta al código de barras de la cédula."
+        );
+
+        let didOptimizeForSmallBarcode = false;
+
+        try {
+          didOptimizeForSmallBarcode = await optimizeCameraTrackForSmallBarcode(
+            cameraVideoRef.current
+          );
+        } catch {
+          didOptimizeForSmallBarcode = false;
+        }
+
+        setCameraStatus(
+          didOptimizeForSmallBarcode
+            ? "Camara activa. Pon el codigo horizontal dentro de la franja."
+            : "Camara activa. Acerca la cedula y centra el codigo en la franja."
         );
       } catch (error) {
         setCameraError(describeCameraError(error));
@@ -918,21 +920,23 @@ function App() {
         </div>
       </header>
 
-      <nav
-        className={isMarkingMode ? "tab-bar tab-bar-terminal" : "tab-bar"}
-        aria-label="Secciones principales"
-      >
-        {availableTabs.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            className={tab.id === selectedTab ? "tab-button active" : "tab-button"}
-            onClick={() => handleTabChange(tab.id)}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </nav>
+      {availableTabs.length > 1 ? (
+        <nav
+          className={isMarkingMode ? "tab-bar tab-bar-terminal" : "tab-bar"}
+          aria-label="Secciones principales"
+        >
+          {availableTabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              className={tab.id === selectedTab ? "tab-button active" : "tab-button"}
+              onClick={() => handleTabChange(tab.id)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+      ) : null}
 
       {notice && !isMarkingMode ? (
         <div className={`notice notice-${notice.type}`}>{notice.text}</div>
@@ -940,36 +944,13 @@ function App() {
 
       {isMarkingMode ? (
         <main className="marking-shell">
-          <section className="marking-hero">
-            <div className="marking-copy">
-              <span className="eyebrow">Terminal de marcacion</span>
-              <h1>ESCANEA TU CEDULA</h1>
-              <p>
-                Esta pantalla esta dedicada solo a marcar entrada o salida.
-                Escanea la cedula del colaborador y el sistema decide
-                automaticamente si abre o cierra el turno.
-              </p>
-
-              <div className="marking-badges">
-                <span>Modo kiosco</span>
-                <span>Lectura por cedula</span>
-                <span>Control en tiempo real</span>
-              </div>
-
-              <div className="marking-dashboard">
-                <div className="clock-display">
-                  <span>{clockDate}</span>
-                  <strong>{clockTime}</strong>
-                </div>
-
-                <div className="terminal-strip">
-                  <span>{Object.keys(activeRecords).length} turno(s) abiertos</span>
-                  <span>{payroll.processedRecords.length} registros esta semana</span>
-                </div>
-              </div>
+          <section className="marking-terminal">
+            <div className="clock-display terminal-clock">
+              <span>Hora</span>
+              <strong>{clockTime}</strong>
             </div>
 
-            <section className="scanner-card">
+            <section className="scanner-card scanner-card-compact">
               <div className="scanner-top">
                 <span className="scanner-badge">Entrada y salida automatica</span>
                 <span className="scanner-meta">Escaner listo</span>
@@ -981,7 +962,7 @@ function App() {
                   <span>Sistema activo</span>
                 </div>
 
-                <form className="scanner-form" onSubmit={handleClockScan}>
+                <form className="scanner-form scanner-form-compact" onSubmit={handleClockScan}>
                   <label className="scanner-label" htmlFor="document-scan">
                     Cedula
                   </label>
@@ -997,39 +978,38 @@ function App() {
                       className="scanner-input"
                       type="text"
                       autoComplete="off"
+                      autoCapitalize="characters"
+                      enterKeyHint="go"
                       inputMode="text"
-                      placeholder="ESCANEA TU CEDULA"
+                      placeholder="ESCRIBE TU CEDULA"
                       value={scanValue}
                       onChange={(event) =>
                         setScanValue(event.target.value.toUpperCase())
                       }
                     />
                   </div>
-                  <button type="submit" className="scan-button">
-                    Registrar marcacion
-                  </button>
                   <button
                     type="button"
                     className={isCameraOpen ? "camera-button active" : "camera-button"}
                     onClick={handleCameraToggle}
                   >
-                    {isCameraOpen ? "Cerrar cámara" : "Escanear con cámara"}
+                    {isCameraOpen ? "Cerrar camara" : "Escanear con la camara"}
                   </button>
                 </form>
               </div>
 
-              <div className={isCameraOpen ? "camera-panel live" : "camera-panel"}>
-                <div className="camera-panel-head">
-                  <span className="scan-feedback-kicker">Cámara de la tablet</span>
+              <div className={isCameraOpen ? "camera-panel live compact" : "camera-panel compact"}>
+                <div className="camera-panel-head compact">
+                  <span className="scan-feedback-kicker">Camara</span>
                   <strong>
                     {isCameraOpen
-                      ? "Apunta al código de barras de la cédula"
-                      : "Escaneo por cámara listo"}
+                      ? "Acerca bien el código de barras de la cédula"
+                      : "Pulsa el boton para abrir la camara"}
                   </strong>
                 </div>
 
                 {isCameraOpen ? (
-                  <div className="camera-viewport">
+                  <div className="camera-viewport compact">
                     <video
                       ref={cameraVideoRef}
                       className="camera-video"
@@ -1037,7 +1017,7 @@ function App() {
                       muted
                       playsInline
                     />
-                    <div className="camera-target" aria-hidden="true">
+                    <div className="camera-target compact" aria-hidden="true">
                       <span className="camera-target-corner top-left" />
                       <span className="camera-target-corner top-right" />
                       <span className="camera-target-corner bottom-left" />
@@ -1046,12 +1026,12 @@ function App() {
                     </div>
                   </div>
                 ) : (
-                  <div className="camera-placeholder">
-                    <span>Activa la cámara para leer el código sin escribir la cédula.</span>
+                  <div className="camera-placeholder compact">
+                    <span>Vista pequena para enfocar mejor codigos de barra chicos.</span>
                   </div>
                 )}
 
-                <div className="camera-status-box">
+                <div className="camera-status-box compact">
                   <span>{cameraStatus}</span>
                   {cameraError ? (
                     <strong className="camera-error">{cameraError}</strong>
@@ -1059,108 +1039,20 @@ function App() {
                 </div>
               </div>
 
-              <div
-                className={
-                  scanResult
-                    ? `scan-feedback ${scanResult.type}`
-                    : "scan-feedback idle"
-                }
-              >
-                {scanResult ? (
-                  <>
-                    <span className="scan-feedback-kicker">{scanResult.title}</span>
-                    <strong>{scanResult.detail}</strong>
-                    <span>
-                      {scanResult.movement
-                        ? `${scanResult.movement} a las ${scanResult.timeLabel} - ${scanResult.dateLabel}`
-                        : scanResult.detail}
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <span className="scan-feedback-kicker">Escaner activo</span>
-                    <strong>Pasa la cedula del colaborador</strong>
-                    <span>
-                      Si no tiene turno abierto, marca entrada. Si ya entro,
-                      marca salida.
-                    </span>
-                  </>
-                )}
-              </div>
+              {scanResult ? (
+                <div className={`scan-feedback ${scanResult.type}`}>
+                  <span className="scan-feedback-kicker">{scanResult.title}</span>
+                  <strong>{scanResult.detail}</strong>
+                  <span>
+                    {scanResult.movement
+                      ? `${scanResult.movement} a las ${scanResult.timeLabel}`
+                      : scanResult.detail}
+                  </span>
+                </div>
+              ) : null}
             </section>
           </section>
 
-          <section className="marking-grid">
-            <article className="terminal-panel">
-              <div className="terminal-panel-head">
-                <div>
-                  <span className="panel-kicker">Ultimos movimientos</span>
-                  <h2>Marcaciones recientes</h2>
-                </div>
-              </div>
-
-              <div className="movement-list">
-                {recentMovements.map((movement) => (
-                  <div key={movement.id} className="movement-row">
-                    <div>
-                      <strong>{movement.collaborator.name}</strong>
-                      <span>
-                        {movement.collaborator.documentId} - {movement.dateLabel}
-                      </span>
-                    </div>
-                    <div className="movement-meta">
-                      <span
-                        className={
-                          movement.movement === "Entrada"
-                            ? "movement-chip entry"
-                            : "movement-chip exit"
-                        }
-                      >
-                        {movement.movement}
-                      </span>
-                      <strong>{movement.timeLabel}</strong>
-                    </div>
-                  </div>
-                ))}
-
-                {recentMovements.length === 0 ? (
-                  <p className="empty-state">
-                    Aun no hay marcaciones registradas en esta terminal.
-                  </p>
-                ) : null}
-              </div>
-            </article>
-
-            <article className="terminal-panel">
-              <div className="terminal-panel-head">
-                <div>
-                  <span className="panel-kicker">Turnos abiertos</span>
-                  <h2>Colaboradores dentro</h2>
-                </div>
-              </div>
-
-              <div className="open-shift-list">
-                {openShiftRows.map((entry) => (
-                  <div key={`${entry.collaborator.id}-${entry.timeLabel}`} className="open-shift-row">
-                    <div>
-                      <strong>{entry.collaborator.name}</strong>
-                      <span>{entry.collaborator.documentId}</span>
-                    </div>
-                    <div className="open-shift-time">
-                      <span>{entry.dateLabel}</span>
-                      <strong>{entry.timeLabel}</strong>
-                    </div>
-                  </div>
-                ))}
-
-                {openShiftRows.length === 0 ? (
-                  <p className="empty-state">
-                    No hay entradas pendientes de salida en este momento.
-                  </p>
-                ) : null}
-              </div>
-            </article>
-          </section>
         </main>
       ) : null}
 

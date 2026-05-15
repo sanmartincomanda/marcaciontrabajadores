@@ -578,6 +578,30 @@ button {
   z-index: 1;
 }
 
+.marking-terminal {
+  width: min(100%, 760px);
+  margin: 0 auto;
+  display: grid;
+  gap: 18px;
+}
+
+.terminal-clock {
+  width: min(100%, 560px);
+  min-width: 0;
+  margin: 0 auto;
+  justify-items: center;
+  text-align: center;
+}
+
+.terminal-clock span {
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.terminal-clock strong {
+  font-size: clamp(3.2rem, 11vw, 5rem);
+}
+
 .marking-hero {
   display: grid;
   grid-template-columns: minmax(0, 1.05fr) minmax(360px, 0.95fr);
@@ -712,6 +736,48 @@ button {
   gap: 20px;
   align-content: start;
   min-height: 480px;
+}
+
+.scanner-card-compact {
+  width: min(100%, 560px);
+  margin: 0 auto;
+  min-height: 0;
+  gap: 16px;
+  padding: 20px;
+}
+
+.scanner-card-compact .scanner-top,
+.scanner-card-compact .scanner-stage-head {
+  display: none;
+}
+
+.scanner-card-compact .scanner-stage {
+  padding: 0;
+  background: transparent;
+  border: none;
+}
+
+.scanner-card-compact .scanner-stage::before {
+  display: none;
+}
+
+.scanner-form-compact {
+  gap: 12px;
+}
+
+.scanner-form-compact .scanner-input-shell {
+  padding: 14px;
+  border-radius: 24px;
+}
+
+.scanner-form-compact .scanner-input {
+  min-height: 82px;
+  padding: 16px 20px;
+  font-size: clamp(1.55rem, 4.5vw, 2.35rem);
+  letter-spacing: 0.04em;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.02),
+    0 0 0 6px rgba(6, 22, 31, 0.34);
 }
 
 .scanner-top,
@@ -943,6 +1009,18 @@ button {
     inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
+.camera-panel.compact {
+  display: none;
+  width: min(100%, 380px);
+  margin: 0 auto;
+  padding: 12px;
+  gap: 12px;
+}
+
+.camera-panel.live.compact {
+  display: grid;
+}
+
 .camera-panel-head,
 .camera-status-box {
   position: relative;
@@ -956,11 +1034,22 @@ button {
   gap: 16px;
 }
 
+.camera-panel-head.compact {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
 .camera-panel-head strong {
   max-width: 30ch;
   color: #f5fbff;
   font-size: 1.02rem;
   line-height: 1.35;
+}
+
+.camera-panel-head.compact strong {
+  max-width: none;
+  font-size: 0.94rem;
 }
 
 .camera-viewport,
@@ -981,6 +1070,15 @@ button {
     0 18px 42px rgba(2, 10, 16, 0.34);
 }
 
+.camera-viewport.compact,
+.camera-placeholder.compact {
+  width: min(100%, 300px);
+  min-height: 104px;
+  aspect-ratio: 16 / 5;
+  margin: 0 auto;
+  border-radius: 18px;
+}
+
 .camera-video {
   display: block;
   width: 100%;
@@ -988,6 +1086,11 @@ button {
   height: 100%;
   object-fit: cover;
   filter: saturate(1.08) contrast(1.06);
+}
+
+.camera-viewport.compact .camera-video {
+  min-height: 0;
+  height: 100%;
 }
 
 .camera-target {
@@ -998,6 +1101,31 @@ button {
     linear-gradient(180deg, rgba(1, 12, 18, 0.1), rgba(1, 12, 18, 0.32)),
     radial-gradient(circle at center, rgba(67, 234, 255, 0.1), transparent 56%);
   pointer-events: none;
+}
+
+.camera-target.compact {
+  inset: 10px 14px;
+  border-radius: 16px;
+  background:
+    linear-gradient(180deg, rgba(1, 12, 18, 0.08), rgba(1, 12, 18, 0.22));
+}
+
+.camera-target.compact::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  top: 50%;
+  height: 22px;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  border: 1px solid rgba(103, 242, 255, 0.12);
+  background: rgba(4, 13, 20, 0.16);
+}
+
+.camera-target.compact .camera-target-corner {
+  width: 22px;
+  height: 22px;
 }
 
 .camera-target-corner {
@@ -1045,6 +1173,14 @@ button {
   animation: cameraSweep 3.1s ease-in-out infinite;
 }
 
+.camera-target.compact .camera-target-line {
+  top: 50%;
+  left: 12px;
+  right: 12px;
+  transform: translateY(-50%);
+  animation: none;
+}
+
 .camera-placeholder {
   display: grid;
   place-items: center;
@@ -1069,6 +1205,13 @@ button {
   border: 1px solid rgba(86, 193, 221, 0.14);
 }
 
+.camera-status-box.compact {
+  width: min(100%, 300px);
+  margin: 0 auto;
+  padding: 12px 14px;
+  text-align: center;
+}
+
 .camera-status-box span {
   color: rgba(207, 228, 236, 0.82);
 }
@@ -1085,6 +1228,12 @@ button {
   gap: 8px;
   border: 1px solid rgba(86, 193, 221, 0.12);
   background: rgba(8, 22, 31, 0.82);
+}
+
+.scanner-card-compact .scan-feedback {
+  width: min(100%, 420px);
+  margin: 0 auto;
+  text-align: center;
 }
 
 .scan-feedback.idle {
