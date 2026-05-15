@@ -1,0 +1,928 @@
+import { useDeferredValue, useEffect, useState } from "react";
+import { collaborators } from "./data/collaborators";
+import {
+  exportAllSlipsWorkbook,
+  exportConsolidatedWorkbook,
+  exportIndividualSlipWorkbook,
+} from "./utils/exporters";
+import { buildPayrollSnapshot } from "./utils/payroll";
+import {
+  formatCompactHours,
+  formatCurrency,
+  formatDateLabel,
+  formatDateTimeLabel,
+  formatHours,
+  getMonday,
+  getWeekEnd,
+  isDateInWeek,
+  toInputDate,
+  toInputTime,
+} from "./utils/time";
+
+const SETTINGS_KEY = "horas-extras/settings-v1";
+const RECORDS_KEY = "horas-extras/records-v1";
+
+const tabs = [
+  { id: "resumen", label: "Resumen semanal" },
+  { id: "manual", label: "Ingreso manual" },
+  { id: "marcacion", label: "Marcacion por trabajador" },
+  { id: "reportes", label: "Reportes y descargas" },
+];
+
+function loadStored(key, fallback) {
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function createManualForm(weekStart, employeeId = collaborators[0]?.id ?? "") {
+  return {
+    employeeId,
+    date: weekStart,
+    checkIn: "",
+    checkOut: "",
+    breakMinutes: "0",
+    source: "manual",
+  };
+}
+
+function StatCard({ label, value, caption }) {
+  return (
+    <article className="stat-card">
+      <span className="stat-label">{label}</span>
+      <strong className="stat-value">{value}</strong>
+      <span className="stat-caption">{caption}</span>
+    </article>
+  );
+}
+
+function App() {
+  const defaultWeekStart = getMonday(new Date());
+  const [selectedTab, setSelectedTab] = useState("resumen");
+  const [settings, setSettings] = useState(() =>
+    loadStored(SETTINGS_KEY, {
+      weekStart: defaultWeekStart,
+      standardHoursPerDay: 8,
+      overtimeMultiplier: 2,
+    })
+  );
+  const [records, setRecords] = useState(() => loadStored(RECORDS_KEY, []));
+  const [manualForm, setManualForm] = useState(() =>
+    createManualForm(defaultWeekStart)
+  );
+  const [editingRecordId, setEditingRecordId] = useState(null);
+  const [selectedSlipEmployeeId, setSelectedSlipEmployeeId] = useState(
+    collaborators[0]?.id ?? ""
+  );
+  const [workerSearch, setWorkerSearch] = useState("");
+  const [notice, setNotice] = useState(null);
+  const [now, setNow] = useState(() => Date.now());
+  const deferredSearch = useDeferredValue(workerSearch);
+
+  useEffect(() => {
+    window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  }, [settings]);
+
+  useEffect(() => {
+    window.localStorage.setItem(RECORDS_KEY, JSON.stringify(records));
+  }, [records]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 60000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!notice) {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => setNotice(null), 3600);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+
+  const payroll = buildPayrollSnapshot(collaborators, records, settings);
+  const currentWeekEnd = getWeekEnd(settings.weekStart);
+  const visibleSummaryRows = payroll.summaryRows.filter(
+    (row) => row.recordCount > 0 || row.overtimeHours > 0
+  );
+  const activeRecords = records.reduce((collection, record) => {
+    if (!record.checkOut) {
+      collection[record.employeeId] = record;
+    }
+    return collection;
+  }, {});
+  const normalizedSearch = deferredSearch.trim().toLowerCase();
+  const filteredCollaborators = collaborators.filter((collaborator) =>
+    collaborator.name.toLowerCase().includes(normalizedSearch)
+  );
+  const topWorkers = [...payroll.summaryRows]
+    .sort((left, right) => right.totalPay - left.totalPay)
+    .slice(0, 5);
+  const selectedSlipSummary =
+    payroll.summaryRows.find(
+      (row) => row.collaborator.id === selectedSlipEmployeeId
+    ) ?? payroll.summaryRows[0];
+  const selectedSlipDays = payroll.dailySummaries.filter(
+    (day) => day.employeeId === selectedSlipSummary?.collaborator.id
+  );
+
+  function showNotice(type, text) {
+    setNotice({ id: crypto.randomUUID(), type, text });
+  }
+
+  function handleWeekStartChange(nextWeekStart) {
+    setSettings((current) => ({
+      ...current,
+      weekStart: nextWeekStart,
+    }));
+
+    setManualForm((current) =>
+      !current.date || !isDateInWeek(current.date, nextWeekStart)
+        ? { ...current, date: nextWeekStart }
+        : current
+    );
+  }
+
+  function resetManualForm() {
+    setEditingRecordId(null);
+    setManualForm(createManualForm(settings.weekStart, manualForm.employeeId));
+  }
+
+  function handleManualSubmit(event) {
+    event.preventDefault();
+
+    if (!manualForm.employeeId || !manualForm.date || !manualForm.checkIn) {
+      showNotice(
+        "error",
+        "Completa colaborador, fecha y hora de entrada para guardar el registro."
+      );
+      return;
+    }
+
+    const timestamp = new Date().toISOString();
+    const payload = {
+      id: editingRecordId ?? crypto.randomUUID(),
+      employeeId: manualForm.employeeId,
+      date: manualForm.date,
+      checkIn: manualForm.checkIn,
+      checkOut: manualForm.checkOut,
+      breakMinutes: Number(manualForm.breakMinutes || 0),
+      source: manualForm.source,
+      updatedAt: timestamp,
+      createdAt: timestamp,
+    };
+
+    setRecords((current) => {
+      if (editingRecordId) {
+        return current.map((record) =>
+          record.id === editingRecordId
+            ? { ...record, ...payload, createdAt: record.createdAt }
+            : record
+        );
+      }
+      return [payload, ...current];
+    });
+
+    showNotice(
+      "success",
+      editingRecordId
+        ? "Registro actualizado correctamente."
+        : "Registro manual guardado."
+    );
+    setEditingRecordId(null);
+    setManualForm(createManualForm(settings.weekStart, manualForm.employeeId));
+  }
+
+  function handleEditRecord(record) {
+    setEditingRecordId(record.id);
+    setSelectedTab("manual");
+    setManualForm({
+      employeeId: record.employeeId,
+      date: record.date,
+      checkIn: record.checkIn || "",
+      checkOut: record.checkOut || "",
+      breakMinutes: String(record.breakMinutes || 0),
+      source: record.source || "manual",
+    });
+  }
+
+  function handleDeleteRecord(recordId) {
+    setRecords((current) => current.filter((record) => record.id !== recordId));
+    if (editingRecordId === recordId) {
+      resetManualForm();
+    }
+    showNotice("success", "Registro eliminado.");
+  }
+
+  function handleClockIn(employeeId) {
+    if (activeRecords[employeeId]) {
+      showNotice("error", "Ese colaborador ya tiene una entrada abierta.");
+      return;
+    }
+
+    const timestamp = new Date();
+    setRecords((current) => [
+      {
+        id: crypto.randomUUID(),
+        employeeId,
+        date: toInputDate(timestamp),
+        checkIn: toInputTime(timestamp),
+        checkOut: "",
+        breakMinutes: 0,
+        source: "clock",
+        createdAt: timestamp.toISOString(),
+        updatedAt: timestamp.toISOString(),
+      },
+      ...current,
+    ]);
+
+    showNotice("success", "Entrada marcada.");
+  }
+
+  function handleClockOut(employeeId) {
+    const activeRecord = activeRecords[employeeId];
+    if (!activeRecord) {
+      showNotice("error", "No hay una entrada abierta para ese colaborador.");
+      return;
+    }
+
+    const timestamp = new Date();
+    setRecords((current) =>
+      current.map((record) =>
+        record.id === activeRecord.id
+          ? {
+              ...record,
+              checkOut: toInputTime(timestamp),
+              updatedAt: timestamp.toISOString(),
+            }
+          : record
+      )
+    );
+
+    showNotice("success", "Salida marcada.");
+  }
+
+  function exportConsolidated() {
+    exportConsolidatedWorkbook(payroll);
+    showNotice("success", "Consolidado exportado a Excel.");
+  }
+
+  function exportSlip() {
+    if (!selectedSlipSummary) {
+      showNotice("error", "Selecciona un colaborador para generar la colilla.");
+      return;
+    }
+    exportIndividualSlipWorkbook(payroll, selectedSlipSummary.collaborator.id);
+    showNotice("success", "Colilla individual exportada.");
+  }
+
+  function exportSlipPack() {
+    exportAllSlipsWorkbook(payroll);
+    showNotice("success", "Paquete completo de colillas exportado.");
+  }
+
+  return (
+    <div className="app-shell">
+      <div className="ambient ambient-one" />
+      <div className="ambient ambient-two" />
+
+      <header className="hero-panel">
+        <div className="hero-copy">
+          <span className="eyebrow">CARNES SAN MARTIN GRANADA</span>
+          <h1>Control semanal de horas extras listo para Netlify</h1>
+          <p>
+            Registra entradas y salidas, marca asistencia por trabajador y
+            descarga el consolidado semanal con colillas individuales sin volver
+            a pelear con el Excel.
+          </p>
+
+          <div className="hero-tags">
+            <span>Lista salarial cargada</span>
+            <span>Marcacion manual y en vivo</span>
+            <span>Exportacion a Excel</span>
+          </div>
+        </div>
+
+        <aside className="hero-summary">
+          <div className="week-card">
+            <span className="week-card-label">Semana activa</span>
+            <strong>
+              {formatDateLabel(settings.weekStart)} al{" "}
+              {formatDateLabel(currentWeekEnd)}
+            </strong>
+            <span>
+              {payroll.processedRecords.length} registro(s) cargado(s) esta
+              semana
+            </span>
+          </div>
+
+          <div className="hero-grid">
+            <StatCard
+              label="Horas extra"
+              value={formatHours(payroll.totals.overtimeHours)}
+              caption="Calculadas con base en la jornada diaria configurada"
+            />
+            <StatCard
+              label="Pago estimado"
+              value={formatCurrency(payroll.totals.totalPay)}
+              caption="Con tarifa de hora extra aplicada automaticamente"
+            />
+            <StatCard
+              label="Trabajadores con extra"
+              value={String(payroll.workersWithOvertime)}
+              caption="Solo quienes superaron la jornada ordinaria"
+            />
+            <StatCard
+              label="Marcaciones abiertas"
+              value={String(Object.keys(activeRecords).length)}
+              caption="Entradas pendientes de salida"
+            />
+          </div>
+        </aside>
+      </header>
+
+      <section className="control-strip">
+        <div className="control-card">
+          <label>
+            Semana inicia
+            <input
+              type="date"
+              value={settings.weekStart}
+              onChange={(event) => handleWeekStartChange(event.target.value)}
+            />
+          </label>
+
+          <label>
+            Jornada ordinaria (horas)
+            <input
+              type="number"
+              min="1"
+              step="0.5"
+              value={settings.standardHoursPerDay}
+              onChange={(event) =>
+                setSettings((current) => ({
+                  ...current,
+                  standardHoursPerDay: Number(event.target.value || 0),
+                }))
+              }
+            />
+          </label>
+
+          <label>
+            Multiplicador de hora extra
+            <input
+              type="number"
+              min="1"
+              step="0.25"
+              value={settings.overtimeMultiplier}
+              onChange={(event) =>
+                setSettings((current) => ({
+                  ...current,
+                  overtimeMultiplier: Number(event.target.value || 0),
+                }))
+              }
+            />
+          </label>
+        </div>
+
+        <div className="control-note">
+          <strong>Regla actual</strong>
+          <p>
+            La app toma el salario mensual ya cargado, calcula la hora ordinaria
+            como salario/30/8 y multiplica la hora extra por{" "}
+            {formatCompactHours(settings.overtimeMultiplier)}.
+          </p>
+        </div>
+      </section>
+
+      <nav className="tab-bar" aria-label="Secciones principales">
+        {tabs.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            className={tab.id === selectedTab ? "tab-button active" : "tab-button"}
+            onClick={() => setSelectedTab(tab.id)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </nav>
+
+      {notice ? (
+        <div className={`notice notice-${notice.type}`}>{notice.text}</div>
+      ) : null}
+
+      <main className="content-grid">
+        {selectedTab === "resumen" ? (
+          <>
+            <section className="panel panel-wide">
+              <div className="panel-heading">
+                <div>
+                  <span className="panel-kicker">Vista central</span>
+                  <h2>Resumen semanal por colaborador</h2>
+                </div>
+                <button type="button" className="ghost-button" onClick={exportConsolidated}>
+                  Descargar consolidado
+                </button>
+              </div>
+
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Colaborador</th>
+                      <th>Salario</th>
+                      <th>Hora ordinaria</th>
+                      <th>Hora extra</th>
+                      <th>Horas trabajadas</th>
+                      <th>Horas extra</th>
+                      <th>Total a pagar</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {payroll.summaryRows.map((row) => (
+                      <tr key={row.collaborator.id}>
+                        <td>{row.collaborator.name}</td>
+                        <td>{formatCurrency(row.salary)}</td>
+                        <td>{formatCurrency(row.ordinaryRate)}</td>
+                        <td>{formatCurrency(row.overtimeRate)}</td>
+                        <td>{formatHours(row.totalWorkedHours)}</td>
+                        <td>{formatHours(row.overtimeHours)}</td>
+                        <td>{formatCurrency(row.totalPay)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section className="panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="panel-kicker">Radar de pago</span>
+                  <h2>Quienes mas acumulan esta semana</h2>
+                </div>
+              </div>
+
+              <div className="leaderboard">
+                {topWorkers.map((row, index) => {
+                  const width =
+                    payroll.totals.totalPay > 0
+                      ? Math.max((row.totalPay / payroll.totals.totalPay) * 100, 8)
+                      : 8;
+
+                  return (
+                    <div key={row.collaborator.id} className="leader-row">
+                      <div className="leader-copy">
+                        <span className="leader-rank">{String(index + 1).padStart(2, "0")}</span>
+                        <div>
+                          <strong>{row.collaborator.name}</strong>
+                          <span>{formatHours(row.overtimeHours)}</span>
+                        </div>
+                      </div>
+                      <div className="leader-bar">
+                        <span style={{ width: `${width}%` }} />
+                      </div>
+                      <strong className="leader-value">{formatCurrency(row.totalPay)}</strong>
+                    </div>
+                  );
+                })}
+                {topWorkers.length === 0 ? (
+                  <p className="empty-state">
+                    Aun no hay horas extras registradas en la semana seleccionada.
+                  </p>
+                ) : null}
+              </div>
+            </section>
+
+            <section className="panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="panel-kicker">Lectura rapida</span>
+                  <h2>Actividad de la semana</h2>
+                </div>
+              </div>
+
+              <div className="metric-stack">
+                <div className="metric-line">
+                  <span>Registros cerrados</span>
+                  <strong>
+                    {
+                      payroll.processedRecords.filter((record) => record.checkOut)
+                        .length
+                    }
+                  </strong>
+                </div>
+                <div className="metric-line">
+                  <span>Registros pendientes</span>
+                  <strong>
+                    {
+                      payroll.processedRecords.filter((record) => !record.checkOut)
+                        .length
+                    }
+                  </strong>
+                </div>
+                <div className="metric-line">
+                  <span>Horas trabajadas</span>
+                  <strong>{formatHours(payroll.totals.workedHours)}</strong>
+                </div>
+                <div className="metric-line">
+                  <span>Colaboradores con actividad</span>
+                  <strong>{String(visibleSummaryRows.length)}</strong>
+                </div>
+              </div>
+            </section>
+          </>
+        ) : null}
+
+        {selectedTab === "manual" ? (
+          <>
+            <section className="panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="panel-kicker">Entrada manual</span>
+                  <h2>{editingRecordId ? "Editar registro" : "Agregar registro"}</h2>
+                </div>
+              </div>
+
+              <form className="manual-form" onSubmit={handleManualSubmit}>
+                <label>
+                  Colaborador
+                  <select
+                    value={manualForm.employeeId}
+                    onChange={(event) =>
+                      setManualForm((current) => ({
+                        ...current,
+                        employeeId: event.target.value,
+                      }))
+                    }
+                  >
+                    {collaborators.map((collaborator) => (
+                      <option key={collaborator.id} value={collaborator.id}>
+                        {collaborator.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <div className="form-grid">
+                  <label>
+                    Fecha
+                    <input
+                      type="date"
+                      value={manualForm.date}
+                      onChange={(event) =>
+                        setManualForm((current) => ({
+                          ...current,
+                          date: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+
+                  <label>
+                    Descanso (min)
+                    <input
+                      type="number"
+                      min="0"
+                      step="15"
+                      value={manualForm.breakMinutes}
+                      onChange={(event) =>
+                        setManualForm((current) => ({
+                          ...current,
+                          breakMinutes: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
+
+                <div className="form-grid">
+                  <label>
+                    Hora de entrada
+                    <input
+                      type="time"
+                      value={manualForm.checkIn}
+                      onChange={(event) =>
+                        setManualForm((current) => ({
+                          ...current,
+                          checkIn: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+
+                  <label>
+                    Hora de salida
+                    <input
+                      type="time"
+                      value={manualForm.checkOut}
+                      onChange={(event) =>
+                        setManualForm((current) => ({
+                          ...current,
+                          checkOut: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
+
+                <label>
+                  Tipo de registro
+                  <select
+                    value={manualForm.source}
+                    onChange={(event) =>
+                      setManualForm((current) => ({
+                        ...current,
+                        source: event.target.value,
+                      }))
+                    }
+                  >
+                    <option value="manual">Manual</option>
+                    <option value="clock">Marcacion</option>
+                  </select>
+                </label>
+
+                <div className="button-row">
+                  <button type="submit" className="primary-button">
+                    {editingRecordId ? "Guardar cambios" : "Agregar registro"}
+                  </button>
+                  <button type="button" className="ghost-button" onClick={resetManualForm}>
+                    Limpiar
+                  </button>
+                </div>
+              </form>
+            </section>
+
+            <section className="panel panel-wide">
+              <div className="panel-heading">
+                <div>
+                  <span className="panel-kicker">Semana activa</span>
+                  <h2>Registros cargados</h2>
+                </div>
+                <span className="panel-meta">
+                  {formatDateLabel(settings.weekStart)} al {formatDateLabel(currentWeekEnd)}
+                </span>
+              </div>
+
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Fecha</th>
+                      <th>Colaborador</th>
+                      <th>Entrada</th>
+                      <th>Salida</th>
+                      <th>Descanso</th>
+                      <th>Horas trabajadas</th>
+                      <th>Fuente</th>
+                      <th>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {payroll.processedRecords.map((record) => (
+                      <tr key={record.id}>
+                        <td>
+                          {formatDateLabel(record.date)}
+                          <div className="cell-meta">{record.dayLabel}</div>
+                        </td>
+                        <td>{record.collaborator.name}</td>
+                        <td>{record.checkIn || "--"}</td>
+                        <td>{record.checkOut || "Pendiente"}</td>
+                        <td>{Number(record.breakMinutes || 0)} min</td>
+                        <td>{formatHours(record.workedHours)}</td>
+                        <td>{record.source === "clock" ? "Marcacion" : "Manual"}</td>
+                        <td>
+                          <div className="mini-actions">
+                            <button
+                              type="button"
+                              className="mini-button"
+                              onClick={() => handleEditRecord(record)}
+                            >
+                              Editar
+                            </button>
+                            <button
+                              type="button"
+                              className="mini-button danger"
+                              onClick={() => handleDeleteRecord(record.id)}
+                            >
+                              Eliminar
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </>
+        ) : null}
+
+        {selectedTab === "marcacion" ? (
+          <>
+            <section className="panel panel-wide">
+              <div className="panel-heading">
+                <div>
+                  <span className="panel-kicker">Marcacion por colaborador</span>
+                  <h2>Pantalla de entrada y salida</h2>
+                </div>
+                <div className="panel-tools">
+                  <input
+                    className="search-input"
+                    type="search"
+                    placeholder="Buscar trabajador..."
+                    value={workerSearch}
+                    onChange={(event) => setWorkerSearch(event.target.value)}
+                  />
+                  <span className="panel-meta">
+                    Hora actual {new Date(now).toLocaleTimeString("es-NI", { hour: "2-digit", minute: "2-digit" })}
+                  </span>
+                </div>
+              </div>
+
+              <div className="worker-grid">
+                {filteredCollaborators.map((collaborator) => {
+                  const activeRecord = activeRecords[collaborator.id];
+                  const latestRecord = records.find(
+                    (record) => record.employeeId === collaborator.id
+                  );
+
+                  return (
+                    <article
+                      key={collaborator.id}
+                      className={activeRecord ? "worker-card live" : "worker-card"}
+                    >
+                      <div className="worker-card-top">
+                        <div>
+                          <h3>{collaborator.name}</h3>
+                          <span>{formatCurrency(collaborator.salary)} mensual</span>
+                        </div>
+                        <span className={activeRecord ? "status-pill on" : "status-pill off"}>
+                          {activeRecord ? "En turno" : "Disponible"}
+                        </span>
+                      </div>
+
+                      <div className="worker-card-body">
+                        <p>
+                          Ultimo movimiento:{" "}
+                          {latestRecord?.updatedAt
+                            ? formatDateTimeLabel(latestRecord.updatedAt)
+                            : "sin registros"}
+                        </p>
+                        <p>
+                          Entrada abierta:{" "}
+                          {activeRecord
+                            ? `${formatDateLabel(activeRecord.date)} ${activeRecord.checkIn}`
+                            : "ninguna"}
+                        </p>
+                      </div>
+
+                      <div className="button-row">
+                        <button
+                          type="button"
+                          className="primary-button"
+                          disabled={Boolean(activeRecord)}
+                          onClick={() => handleClockIn(collaborator.id)}
+                        >
+                          Marcar entrada
+                        </button>
+                        <button
+                          type="button"
+                          className="ghost-button"
+                          disabled={!activeRecord}
+                          onClick={() => handleClockOut(collaborator.id)}
+                        >
+                          Marcar salida
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
+          </>
+        ) : null}
+
+        {selectedTab === "reportes" ? (
+          <>
+            <section className="panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="panel-kicker">Descargas</span>
+                  <h2>Excel y colillas</h2>
+                </div>
+              </div>
+
+              <div className="report-stack">
+                <button type="button" className="primary-button" onClick={exportConsolidated}>
+                  Descargar consolidado semanal
+                </button>
+                <button type="button" className="ghost-button" onClick={exportSlipPack}>
+                  Descargar paquete de colillas
+                </button>
+              </div>
+
+              <label className="full-width">
+                Colaborador para colilla individual
+                <select
+                  value={selectedSlipEmployeeId}
+                  onChange={(event) => setSelectedSlipEmployeeId(event.target.value)}
+                >
+                  {collaborators.map((collaborator) => (
+                    <option key={collaborator.id} value={collaborator.id}>
+                      {collaborator.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <button type="button" className="primary-button" onClick={exportSlip}>
+                Descargar colilla individual
+              </button>
+            </section>
+
+            <section className="panel panel-wide">
+              <div className="panel-heading">
+                <div>
+                  <span className="panel-kicker">Vista previa</span>
+                  <h2>Colilla de {selectedSlipSummary?.collaborator.name}</h2>
+                </div>
+              </div>
+
+              {selectedSlipSummary ? (
+                <>
+                  <div className="slip-summary">
+                    <StatCard
+                      label="Salario mensual"
+                      value={formatCurrency(selectedSlipSummary.salary)}
+                      caption="Base del archivo original"
+                    />
+                    <StatCard
+                      label="Hora extra"
+                      value={formatCurrency(selectedSlipSummary.overtimeRate)}
+                      caption="Se recalcula segun la configuracion semanal"
+                    />
+                    <StatCard
+                      label="Horas extra"
+                      value={formatHours(selectedSlipSummary.overtimeHours)}
+                      caption="Total de la semana seleccionada"
+                    />
+                    <StatCard
+                      label="Total a pagar"
+                      value={formatCurrency(selectedSlipSummary.totalPay)}
+                      caption="Monto que saldra en la colilla"
+                    />
+                  </div>
+
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Fecha</th>
+                          <th>Dia</th>
+                          <th>Horario(s)</th>
+                          <th>Horas trabajadas</th>
+                          <th>Horas extra</th>
+                          <th>Pago</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedSlipDays.map((day) => (
+                          <tr key={`${day.employeeId}-${day.date}`}>
+                            <td>{formatDateLabel(day.date)}</td>
+                            <td>{day.dayLabel}</td>
+                            <td>{day.scheduleLabel}</td>
+                            <td>{formatHours(day.totalWorkedHours)}</td>
+                            <td>{formatHours(day.overtimeHours)}</td>
+                            <td>{formatCurrency(day.overtimePay)}</td>
+                          </tr>
+                        ))}
+                        {selectedSlipDays.length === 0 ? (
+                          <tr>
+                            <td colSpan="6">
+                              <span className="empty-state">
+                                Este colaborador no tiene horas extras registradas en la
+                                semana seleccionada.
+                              </span>
+                            </td>
+                          </tr>
+                        ) : null}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              ) : null}
+            </section>
+          </>
+        ) : null}
+      </main>
+    </div>
+  );
+}
+
+export default App;
