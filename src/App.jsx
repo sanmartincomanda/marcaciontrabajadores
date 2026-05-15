@@ -35,6 +35,25 @@ const tabs = [
   { id: "reportes", label: "Reportes y descargas" },
 ];
 
+const AUTH_SESSION_KEY = "horas-extras/auth-v1";
+
+const APP_USERS = {
+  admin: {
+    username: "admin",
+    password: "159sanmartin",
+    label: "Administrador",
+    subtitle: "Acceso completo a reportes, ajustes y terminal.",
+    allowedTabs: tabs.map((tab) => tab.id),
+  },
+  marcar: {
+    username: "marcar",
+    password: "marcar",
+    label: "Terminal de marcacion",
+    subtitle: "Acceso exclusivo para entrada y salida por cedula.",
+    allowedTabs: ["marcacion"],
+  },
+};
+
 function loadStored(key, fallback) {
   try {
     const raw = window.localStorage.getItem(key);
@@ -48,6 +67,27 @@ function getInitialTab() {
   const availableTabs = new Set(tabs.map((tab) => tab.id));
   const hash = window.location.hash.replace("#", "").trim().toLowerCase();
   return availableTabs.has(hash) ? hash : "marcacion";
+}
+
+function normalizeUsername(value) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function getAllowedTabs(username) {
+  const account = APP_USERS[normalizeUsername(username)];
+  return tabs.filter((tab) => account?.allowedTabs.includes(tab.id));
+}
+
+function resolveAccessibleTab(tabId, username) {
+  const allowedTabs = getAllowedTabs(username);
+  return allowedTabs.some((tab) => tab.id === tabId)
+    ? tabId
+    : (allowedTabs[0]?.id ?? "marcacion");
+}
+
+function getStoredSession() {
+  const storedSession = loadStored(AUTH_SESSION_KEY, null);
+  return APP_USERS[storedSession?.username] ? storedSession : null;
 }
 
 function createManualForm(weekStart, employeeId = collaborators[0]?.id ?? "") {
@@ -90,7 +130,18 @@ function describeCameraError(error) {
 
 function App() {
   const defaultWeekStart = getMonday(new Date());
-  const [selectedTab, setSelectedTab] = useState(getInitialTab);
+  const [selectedTab, setSelectedTab] = useState(() => {
+    const storedSession = getStoredSession();
+    return storedSession
+      ? resolveAccessibleTab(getInitialTab(), storedSession.username)
+      : getInitialTab();
+  });
+  const [currentUser, setCurrentUser] = useState(getStoredSession);
+  const [loginForm, setLoginForm] = useState({
+    username: "",
+    password: "",
+  });
+  const [authError, setAuthError] = useState("");
   const [settings, setSettings] = useState(() =>
     loadStored(SETTINGS_KEY, {
       weekStart: defaultWeekStart,
@@ -120,10 +171,21 @@ function App() {
   const cameraReaderRef = useRef(null);
   const cameraControlsRef = useRef(null);
   const cameraLockRef = useRef(false);
+  const activeUser = currentUser ? APP_USERS[currentUser.username] : null;
+  const availableTabs = currentUser ? getAllowedTabs(currentUser.username) : [];
 
   useEffect(() => {
     window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   }, [settings]);
+
+  useEffect(() => {
+    if (currentUser) {
+      window.localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(currentUser));
+      return;
+    }
+
+    window.localStorage.removeItem(AUTH_SESSION_KEY);
+  }, [currentUser]);
 
   useEffect(() => {
     window.localStorage.setItem(RECORDS_KEY, JSON.stringify(records));
@@ -146,12 +208,15 @@ function App() {
   useEffect(() => {
     const handleHashChange = () => {
       const nextTab = getInitialTab();
-      setSelectedTab(nextTab);
+      const safeTab = currentUser
+        ? resolveAccessibleTab(nextTab, currentUser.username)
+        : nextTab;
+      setSelectedTab(safeTab);
     };
 
     window.addEventListener("hashchange", handleHashChange);
     return () => window.removeEventListener("hashchange", handleHashChange);
-  }, []);
+  }, [currentUser]);
 
   useEffect(() => {
     const nextHash = `#${selectedTab}`;
@@ -255,6 +320,13 @@ function App() {
   }
 
   function handleTabChange(tabId) {
+    if (
+      currentUser &&
+      !availableTabs.some((tab) => tab.id === tabId)
+    ) {
+      return;
+    }
+
     if (tabId !== "marcacion") {
       cameraControlsRef.current?.stop?.();
       cameraControlsRef.current = null;
@@ -556,6 +628,49 @@ function App() {
     setIsCameraOpen(true);
   }
 
+  function handleLoginSubmit(event) {
+    event.preventDefault();
+
+    const username = normalizeUsername(loginForm.username);
+    const account = APP_USERS[username];
+
+    if (!account || loginForm.password !== account.password) {
+      setAuthError("Usuario o contraseña incorrectos.");
+      return;
+    }
+
+    setCurrentUser({ username: account.username });
+    setAuthError("");
+    setNotice(null);
+    setScanResult(null);
+    setSelectedTab(resolveAccessibleTab(getInitialTab(), account.username));
+    setLoginForm({
+      username: account.username,
+      password: "",
+    });
+  }
+
+  function handleLogout() {
+    cameraControlsRef.current?.stop?.();
+    cameraControlsRef.current = null;
+    cameraLockRef.current = false;
+    setIsCameraOpen(false);
+    setCameraError("");
+    setCameraStatus(
+      "Usa la cámara de la tablet para leer el código de barras de la cédula."
+    );
+    setCurrentUser(null);
+    setSelectedTab("marcacion");
+    setNotice(null);
+    setAuthError("");
+    setScanValue("");
+    setScanResult(null);
+    setLoginForm({
+      username: "",
+      password: "",
+    });
+  }
+
   function exportConsolidated() {
     exportConsolidatedWorkbook(payroll);
     showNotice("success", "Consolidado exportado a Excel.");
@@ -573,6 +688,91 @@ function App() {
   function exportSlipPack() {
     exportAllSlipsWorkbook(payroll);
     showNotice("success", "Paquete completo de colillas exportado.");
+  }
+
+  if (!currentUser || !activeUser) {
+    return (
+      <div className="auth-shell">
+        <div className="ambient ambient-one" />
+        <div className="ambient ambient-two" />
+
+        <section className="auth-card">
+          <span className="eyebrow">CARNES SAN MARTIN GRANADA</span>
+          <h1>Ingresa al sistema de marcacion y horas extras</h1>
+          <p>
+            Admin entra a toda la aplicacion. Marcar solo puede usar la
+            terminal de marcacion para entrada y salida.
+          </p>
+
+          <div className="auth-user-grid">
+            {Object.values(APP_USERS).map((account) => (
+              <button
+                key={account.username}
+                type="button"
+                className={
+                  normalizeUsername(loginForm.username) === account.username
+                    ? "auth-user-card active"
+                    : "auth-user-card"
+                }
+                onClick={() => {
+                  setAuthError("");
+                  setLoginForm((current) => ({
+                    ...current,
+                    username: account.username,
+                  }));
+                }}
+              >
+                <strong>{account.username}</strong>
+                <span>{account.label}</span>
+                <small>{account.subtitle}</small>
+              </button>
+            ))}
+          </div>
+
+          <form className="login-form" onSubmit={handleLoginSubmit}>
+            <label>
+              Usuario
+              <input
+                type="text"
+                autoComplete="username"
+                value={loginForm.username}
+                onChange={(event) => {
+                  setAuthError("");
+                  setLoginForm((current) => ({
+                    ...current,
+                    username: event.target.value,
+                  }));
+                }}
+              />
+            </label>
+
+            <label>
+              Contraseña
+              <input
+                type="password"
+                autoComplete="current-password"
+                value={loginForm.password}
+                onChange={(event) => {
+                  setAuthError("");
+                  setLoginForm((current) => ({
+                    ...current,
+                    password: event.target.value,
+                  }));
+                }}
+              />
+            </label>
+
+            {authError ? (
+              <div className="notice notice-error auth-notice">{authError}</div>
+            ) : null}
+
+            <button type="submit" className="primary-button">
+              Entrar
+            </button>
+          </form>
+        </section>
+      </div>
+    );
   }
 
   return (
@@ -693,11 +893,36 @@ function App() {
         </>
       ) : null}
 
+      <header
+        className={
+          isMarkingMode
+            ? "session-strip session-strip-terminal"
+            : "session-strip"
+        }
+      >
+        <div className="session-copy">
+          <span className="panel-kicker">Sesion activa</span>
+          <strong>{activeUser.label}</strong>
+          <span>{activeUser.subtitle}</span>
+        </div>
+
+        <div className="session-actions">
+          <span className="session-pill">{currentUser.username}</span>
+          <button
+            type="button"
+            className={isMarkingMode ? "camera-button" : "ghost-button"}
+            onClick={handleLogout}
+          >
+            Cerrar sesion
+          </button>
+        </div>
+      </header>
+
       <nav
         className={isMarkingMode ? "tab-bar tab-bar-terminal" : "tab-bar"}
         aria-label="Secciones principales"
       >
-        {tabs.map((tab) => (
+        {availableTabs.map((tab) => (
           <button
             key={tab.id}
             type="button"

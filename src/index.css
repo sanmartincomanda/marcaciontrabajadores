@@ -70,6 +70,96 @@ button {
   padding: 32px 0 56px;
 }
 
+.auth-shell {
+  position: relative;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 28px 16px;
+}
+
+.auth-card {
+  position: relative;
+  z-index: 1;
+  width: min(760px, 100%);
+  padding: 34px;
+  border-radius: var(--radius-xl);
+  background: rgba(255, 251, 244, 0.9);
+  border: 1px solid rgba(98, 51, 35, 0.14);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(18px);
+}
+
+.auth-card h1 {
+  margin: 18px 0 10px;
+  font-family: var(--display);
+  font-size: clamp(2.1rem, 5vw, 3.6rem);
+  line-height: 0.96;
+  color: var(--title);
+  max-width: 12ch;
+}
+
+.auth-card p {
+  max-width: 58ch;
+  margin: 0;
+  color: var(--muted);
+}
+
+.auth-user-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin: 26px 0 0;
+}
+
+.auth-user-card {
+  display: grid;
+  gap: 8px;
+  padding: 20px;
+  text-align: left;
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(98, 51, 35, 0.14);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(250, 241, 233, 0.9));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  color: var(--text);
+}
+
+.auth-user-card strong {
+  font-family: var(--display);
+  font-size: 1.2rem;
+  color: var(--title);
+  text-transform: lowercase;
+}
+
+.auth-user-card span,
+.auth-user-card small {
+  color: var(--muted);
+}
+
+.auth-user-card small {
+  font-size: 0.92rem;
+}
+
+.auth-user-card.active {
+  border-color: rgba(166, 64, 36, 0.28);
+  background:
+    linear-gradient(135deg, rgba(166, 64, 36, 0.08), rgba(255, 255, 255, 0.96));
+  box-shadow:
+    0 18px 34px rgba(86, 43, 26, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.76);
+}
+
+.login-form {
+  display: grid;
+  gap: 14px;
+  margin-top: 24px;
+}
+
+.auth-notice {
+  margin-bottom: 0;
+}
+
 .app-shell.marking-mode {
   width: min(1660px, calc(100% - 24px));
   padding-top: 20px;
@@ -340,6 +430,83 @@ button {
   flex-wrap: wrap;
   gap: 10px;
   margin-bottom: 18px;
+}
+
+.session-strip {
+  position: relative;
+  z-index: 1;
+  margin-bottom: 18px;
+  padding: 16px 22px;
+  border-radius: var(--radius-lg);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  background: var(--panel);
+  backdrop-filter: blur(18px);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+}
+
+.session-strip-terminal {
+  background:
+    linear-gradient(180deg, rgba(10, 24, 34, 0.82), rgba(7, 16, 25, 0.92));
+  border-color: rgba(86, 193, 221, 0.18);
+  box-shadow:
+    0 24px 70px rgba(0, 0, 0, 0.32),
+    inset 0 1px 0 rgba(176, 255, 252, 0.08);
+}
+
+.session-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.session-copy strong {
+  color: var(--title);
+  font-family: var(--display);
+  font-size: 1.15rem;
+}
+
+.session-copy span:last-child {
+  color: var(--muted);
+}
+
+.session-strip-terminal .session-copy strong {
+  color: #f5fbff;
+}
+
+.session-strip-terminal .session-copy span:last-child {
+  color: rgba(209, 227, 235, 0.74);
+}
+
+.session-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.session-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.76);
+  border: 1px solid rgba(166, 64, 36, 0.12);
+  color: var(--accent-strong);
+  font-size: 0.92rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.session-strip-terminal .session-pill {
+  background: rgba(8, 26, 36, 0.9);
+  border-color: rgba(86, 193, 221, 0.16);
+  color: #9de7f5;
 }
 
 .tab-bar-terminal {
@@ -1383,7 +1550,8 @@ select:focus {
   .control-strip,
   .content-grid,
   .marking-hero,
-  .marking-grid {
+  .marking-grid,
+  .auth-user-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1419,6 +1587,7 @@ select:focus {
   .control-card,
   .control-note,
   .panel,
+  .auth-card,
   .marking-copy,
   .scanner-card,
   .terminal-panel {
@@ -1435,6 +1604,7 @@ select:focus {
 
   .panel-heading,
   .panel-tools,
+  .session-strip,
   .worker-card-top,
   .scanner-top,
   .movement-row,
