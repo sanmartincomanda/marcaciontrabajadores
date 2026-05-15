@@ -712,6 +712,205 @@ button {
   box-shadow: 0 14px 34px rgba(11, 180, 172, 0.22);
 }
 
+.camera-button {
+  min-height: 60px;
+  border-radius: 999px;
+  border: 1px solid rgba(103, 242, 255, 0.24);
+  background:
+    linear-gradient(135deg, rgba(6, 28, 39, 0.96), rgba(8, 51, 65, 0.9));
+  color: #d9f9ff;
+  font-family: var(--display);
+  font-size: 0.96rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  box-shadow:
+    0 14px 34px rgba(4, 12, 18, 0.3),
+    inset 0 1px 0 rgba(165, 255, 249, 0.08);
+}
+
+.camera-button.active {
+  border-color: rgba(15, 209, 123, 0.44);
+  background:
+    linear-gradient(135deg, rgba(8, 56, 47, 0.96), rgba(8, 33, 41, 0.94));
+  color: #c8ffe9;
+  box-shadow:
+    0 16px 36px rgba(6, 26, 20, 0.34),
+    0 0 0 1px rgba(15, 209, 123, 0.14);
+}
+
+.camera-button:hover {
+  border-color: rgba(103, 242, 255, 0.42);
+}
+
+.camera-button:focus-visible,
+.scan-button:focus-visible,
+.scanner-input:focus-visible {
+  outline: 2px solid rgba(111, 244, 255, 0.82);
+  outline-offset: 4px;
+}
+
+.camera-panel {
+  position: relative;
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+  border-radius: calc(var(--radius-lg) + 2px);
+  background:
+    linear-gradient(180deg, rgba(6, 20, 31, 0.94), rgba(7, 15, 24, 0.98));
+  border: 1px solid rgba(86, 193, 221, 0.14);
+  overflow: hidden;
+}
+
+.camera-panel::before {
+  content: "";
+  position: absolute;
+  inset: 12px;
+  border-radius: calc(var(--radius-lg) - 2px);
+  border: 1px solid rgba(86, 193, 221, 0.08);
+  pointer-events: none;
+}
+
+.camera-panel.live {
+  box-shadow:
+    0 24px 58px rgba(1, 12, 18, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.camera-panel-head,
+.camera-status-box {
+  position: relative;
+  z-index: 1;
+}
+
+.camera-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.camera-panel-head strong {
+  max-width: 30ch;
+  color: #f5fbff;
+  font-size: 1.02rem;
+  line-height: 1.35;
+}
+
+.camera-viewport,
+.camera-placeholder {
+  position: relative;
+  min-height: 260px;
+  border-radius: 28px;
+  overflow: hidden;
+  border: 1px solid rgba(103, 242, 255, 0.16);
+}
+
+.camera-viewport {
+  background:
+    radial-gradient(circle at top, rgba(67, 234, 255, 0.12), transparent 40%),
+    #040d14;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.02),
+    0 18px 42px rgba(2, 10, 16, 0.34);
+}
+
+.camera-video {
+  display: block;
+  width: 100%;
+  min-height: 260px;
+  height: 100%;
+  object-fit: cover;
+  filter: saturate(1.08) contrast(1.06);
+}
+
+.camera-target {
+  position: absolute;
+  inset: 24px;
+  border-radius: 24px;
+  background:
+    linear-gradient(180deg, rgba(1, 12, 18, 0.1), rgba(1, 12, 18, 0.32)),
+    radial-gradient(circle at center, rgba(67, 234, 255, 0.1), transparent 56%);
+  pointer-events: none;
+}
+
+.camera-target-corner {
+  position: absolute;
+  width: 32px;
+  height: 32px;
+  border-style: solid;
+  border-color: #8ef4ff;
+  opacity: 0.84;
+}
+
+.camera-target-corner.top-left {
+  top: 16px;
+  left: 16px;
+  border-width: 3px 0 0 3px;
+}
+
+.camera-target-corner.top-right {
+  top: 16px;
+  right: 16px;
+  border-width: 3px 3px 0 0;
+}
+
+.camera-target-corner.bottom-left {
+  bottom: 16px;
+  left: 16px;
+  border-width: 0 0 3px 3px;
+}
+
+.camera-target-corner.bottom-right {
+  right: 16px;
+  bottom: 16px;
+  border-width: 0 3px 3px 0;
+}
+
+.camera-target-line {
+  position: absolute;
+  left: 20px;
+  right: 20px;
+  top: 30px;
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, #66f3ff, transparent);
+  box-shadow: 0 0 20px rgba(103, 242, 255, 0.56);
+  animation: cameraSweep 3.1s ease-in-out infinite;
+}
+
+.camera-placeholder {
+  display: grid;
+  place-items: center;
+  padding: 32px 24px;
+  background:
+    linear-gradient(180deg, rgba(4, 15, 23, 0.9), rgba(7, 17, 27, 0.98));
+  border-style: dashed;
+  text-align: center;
+}
+
+.camera-placeholder span {
+  max-width: 34ch;
+  color: rgba(216, 235, 243, 0.78);
+}
+
+.camera-status-box {
+  display: grid;
+  gap: 8px;
+  padding: 16px 18px;
+  border-radius: 20px;
+  background: rgba(8, 24, 34, 0.88);
+  border: 1px solid rgba(86, 193, 221, 0.14);
+}
+
+.camera-status-box span {
+  color: rgba(207, 228, 236, 0.82);
+}
+
+.camera-error {
+  color: #ffb288;
+  font-size: 0.94rem;
+}
+
 .scan-feedback {
   border-radius: var(--radius-lg);
   padding: 22px;
@@ -851,6 +1050,27 @@ button {
 
   100% {
     transform: translateY(172px);
+    opacity: 0.08;
+  }
+}
+
+@keyframes cameraSweep {
+  0% {
+    transform: translateY(0);
+    opacity: 0.1;
+  }
+
+  12% {
+    opacity: 1;
+  }
+
+  50% {
+    transform: translateY(128px);
+    opacity: 0.88;
+  }
+
+  100% {
+    transform: translateY(214px);
     opacity: 0.08;
   }
 }
@@ -1251,6 +1471,11 @@ select:focus {
     font-size: 1.45rem;
     min-height: 82px;
     letter-spacing: 0.04em;
+  }
+
+  .camera-panel-head {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .scanner-stage-head {

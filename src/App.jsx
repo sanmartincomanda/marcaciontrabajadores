@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { BrowserMultiFormatReader } from "@zxing/browser";
+import { BarcodeFormat, DecodeHintType, NotFoundException } from "@zxing/library";
 import {
   collaboratorByDocumentId,
   collaboratorMap,
@@ -69,6 +71,23 @@ function StatCard({ label, value, caption }) {
   );
 }
 
+function describeCameraError(error) {
+  const name = error?.name ?? "";
+  if (name === "NotAllowedError") {
+    return "La cámara fue bloqueada. Permite el acceso a la cámara en la tablet o navegador.";
+  }
+
+  if (name === "NotFoundError") {
+    return "No encontré una cámara disponible en este dispositivo.";
+  }
+
+  if (name === "NotReadableError") {
+    return "La cámara ya está siendo usada por otra aplicación o pestaña.";
+  }
+
+  return "No pude iniciar la cámara. Revisa permisos o vuelve a intentarlo.";
+}
+
 function App() {
   const defaultWeekStart = getMonday(new Date());
   const [selectedTab, setSelectedTab] = useState(getInitialTab);
@@ -90,8 +109,17 @@ function App() {
   const [notice, setNotice] = useState(null);
   const [scanValue, setScanValue] = useState("");
   const [scanResult, setScanResult] = useState(null);
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [cameraStatus, setCameraStatus] = useState(
+    "Usa la cámara de la tablet para leer el código de barras de la cédula."
+  );
+  const [cameraError, setCameraError] = useState("");
   const [now, setNow] = useState(() => Date.now());
   const scanInputRef = useRef(null);
+  const cameraVideoRef = useRef(null);
+  const cameraReaderRef = useRef(null);
+  const cameraControlsRef = useRef(null);
+  const cameraLockRef = useRef(false);
 
   useEffect(() => {
     window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
@@ -133,13 +161,13 @@ function App() {
   }, [selectedTab]);
 
   useEffect(() => {
-    if (selectedTab !== "marcacion") {
+    if (selectedTab !== "marcacion" || isCameraOpen) {
       return undefined;
     }
 
     const timer = window.setTimeout(() => scanInputRef.current?.focus(), 80);
     return () => window.clearTimeout(timer);
-  }, [selectedTab, scanResult]);
+  }, [selectedTab, scanResult, isCameraOpen]);
 
   const payroll = buildPayrollSnapshot(collaborators, records, settings);
   const currentWeekEnd = getWeekEnd(settings.weekStart);
@@ -227,6 +255,16 @@ function App() {
   }
 
   function handleTabChange(tabId) {
+    if (tabId !== "marcacion") {
+      cameraControlsRef.current?.stop?.();
+      cameraControlsRef.current = null;
+      cameraLockRef.current = false;
+      setIsCameraOpen(false);
+      setCameraError("");
+      setCameraStatus(
+        "Usa la cámara de la tablet para leer el código de barras de la cédula."
+      );
+    }
     setSelectedTab(tabId);
   }
 
@@ -314,10 +352,8 @@ function App() {
     showNotice("success", "Registro eliminado.");
   }
 
-  function handleClockScan(event) {
-    event.preventDefault();
-
-    const normalizedDocument = normalizeDocumentId(scanValue);
+  function processClockScan(rawValue) {
+    const normalizedDocument = normalizeDocumentId(rawValue);
     if (!normalizedDocument) {
       setScanResult({
         type: "error",
@@ -325,7 +361,7 @@ function App() {
         detail: "Escanea o escribe una cedula para registrar la marcacion.",
       });
       setScanValue("");
-      return;
+      return false;
     }
 
     const collaborator = collaboratorByDocumentId[normalizedDocument];
@@ -333,10 +369,10 @@ function App() {
       setScanResult({
         type: "error",
         title: "Cedula no encontrada",
-        detail: `La cedula ${scanValue.trim()} no esta registrada en el sistema.`,
+        detail: `La cedula ${String(rawValue).trim()} no esta registrada en el sistema.`,
       });
       setScanValue("");
-      return;
+      return false;
     }
 
     const activeRecord = activeRecords[collaborator.id];
@@ -383,6 +419,141 @@ function App() {
       dateLabel: formatDateLabel(nextDate),
     });
     setScanValue("");
+    window.navigator.vibrate?.(90);
+    return true;
+  }
+
+  const handleDetectedBarcode = useEffectEvent((barcodeText) => {
+    if (cameraLockRef.current) {
+      return;
+    }
+
+    cameraLockRef.current = true;
+    setCameraStatus("Código detectado. Registrando marcación...");
+    const didProcess = processClockScan(barcodeText);
+
+    if (didProcess) {
+      cameraControlsRef.current?.stop?.();
+      cameraControlsRef.current = null;
+      setIsCameraOpen(false);
+      setCameraError("");
+      setCameraStatus(
+        "Cámara lista. Puedes volver a abrirla para la siguiente cédula."
+      );
+      return;
+    }
+
+    cameraLockRef.current = false;
+  });
+
+  useEffect(() => {
+    if (!isMarkingMode || !isCameraOpen || !cameraVideoRef.current) {
+      return undefined;
+    }
+
+    let isCancelled = false;
+
+    const startCameraScanner = async () => {
+      if (!window.navigator.mediaDevices?.getUserMedia) {
+        setCameraError(
+          "Este navegador no soporta acceso a cámara. Usa Chrome, Edge o Safari moderno."
+        );
+        setCameraStatus("La cámara no está disponible en este navegador.");
+        return;
+      }
+
+      try {
+        setCameraError("");
+        setCameraStatus("Solicitando cámara trasera...");
+
+        if (!cameraReaderRef.current) {
+          const hints = new Map();
+          hints.set(DecodeHintType.POSSIBLE_FORMATS, [
+            BarcodeFormat.PDF_417,
+            BarcodeFormat.CODE_128,
+            BarcodeFormat.CODE_39,
+            BarcodeFormat.CODABAR,
+            BarcodeFormat.ITF,
+          ]);
+          cameraReaderRef.current = new BrowserMultiFormatReader(hints, {
+            delayBetweenScanAttempts: 180,
+            delayBetweenScanSuccess: 900,
+          });
+        }
+
+        const controls = await cameraReaderRef.current.decodeFromConstraints(
+          {
+            audio: false,
+            video: {
+              facingMode: { ideal: "environment" },
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+            },
+          },
+          cameraVideoRef.current,
+          (result, error) => {
+            if (result) {
+              handleDetectedBarcode(result.getText());
+              return;
+            }
+
+            if (
+              error &&
+              !(error instanceof NotFoundException) &&
+              error?.name !== "NotFoundException"
+            ) {
+              setCameraStatus("Cámara activa. Alinea mejor el código de barras.");
+            }
+          }
+        );
+
+        if (isCancelled) {
+          controls.stop();
+          return;
+        }
+
+        cameraControlsRef.current = controls;
+        cameraLockRef.current = false;
+        setCameraStatus(
+          "Cámara activa. Apunta al código de barras de la cédula."
+        );
+      } catch (error) {
+        setCameraError(describeCameraError(error));
+        setCameraStatus("No pude activar la cámara.");
+      }
+    };
+
+    startCameraScanner();
+
+    return () => {
+      isCancelled = true;
+      cameraControlsRef.current?.stop?.();
+      cameraControlsRef.current = null;
+      cameraLockRef.current = false;
+    };
+  }, [isCameraOpen, isMarkingMode]);
+
+  function handleClockScan(event) {
+    event.preventDefault();
+    processClockScan(scanValue);
+  }
+
+  function handleCameraToggle() {
+    if (isCameraOpen) {
+      cameraControlsRef.current?.stop?.();
+      cameraControlsRef.current = null;
+      cameraLockRef.current = false;
+      setIsCameraOpen(false);
+      setCameraError("");
+      setCameraStatus(
+        "Cámara lista. Puedes volver a abrirla cuando necesites escanear otra cédula."
+      );
+      return;
+    }
+
+    setCameraError("");
+    setCameraStatus("Preparando cámara...");
+    setIsCameraOpen(true);
   }
 
   function exportConsolidated() {
@@ -612,7 +783,55 @@ function App() {
                   <button type="submit" className="scan-button">
                     Registrar marcacion
                   </button>
+                  <button
+                    type="button"
+                    className={isCameraOpen ? "camera-button active" : "camera-button"}
+                    onClick={handleCameraToggle}
+                  >
+                    {isCameraOpen ? "Cerrar cámara" : "Escanear con cámara"}
+                  </button>
                 </form>
+              </div>
+
+              <div className={isCameraOpen ? "camera-panel live" : "camera-panel"}>
+                <div className="camera-panel-head">
+                  <span className="scan-feedback-kicker">Cámara de la tablet</span>
+                  <strong>
+                    {isCameraOpen
+                      ? "Apunta al código de barras de la cédula"
+                      : "Escaneo por cámara listo"}
+                  </strong>
+                </div>
+
+                {isCameraOpen ? (
+                  <div className="camera-viewport">
+                    <video
+                      ref={cameraVideoRef}
+                      className="camera-video"
+                      autoPlay
+                      muted
+                      playsInline
+                    />
+                    <div className="camera-target" aria-hidden="true">
+                      <span className="camera-target-corner top-left" />
+                      <span className="camera-target-corner top-right" />
+                      <span className="camera-target-corner bottom-left" />
+                      <span className="camera-target-corner bottom-right" />
+                      <span className="camera-target-line" />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="camera-placeholder">
+                    <span>Activa la cámara para leer el código sin escribir la cédula.</span>
+                  </div>
+                )}
+
+                <div className="camera-status-box">
+                  <span>{cameraStatus}</span>
+                  {cameraError ? (
+                    <strong className="camera-error">{cameraError}</strong>
+                  ) : null}
+                </div>
               </div>
 
               <div
