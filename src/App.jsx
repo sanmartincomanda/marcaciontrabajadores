@@ -200,6 +200,7 @@ function App() {
   const [selectedReportDate, setSelectedReportDate] = useState(() =>
     toInputDate(new Date())
   );
+  const [selectedReportEmployeeId, setSelectedReportEmployeeId] = useState("all");
   const [notice, setNotice] = useState(null);
   const [scanValue, setScanValue] = useState("");
   const [scanResult, setScanResult] = useState(null);
@@ -285,6 +286,44 @@ function App() {
     settings,
     selectedReportDate
   );
+  const selectedReportCollaborator =
+    selectedReportEmployeeId === "all"
+      ? null
+      : collaborators.find(
+          (collaborator) => collaborator.id === selectedReportEmployeeId
+        ) ?? null;
+  const filteredDailySummaryRows = dailyMarkingSnapshot.summaryRows.filter((row) =>
+    selectedReportEmployeeId === "all" || row.employeeId === selectedReportEmployeeId
+  );
+  const filteredDailyRecords = dailyMarkingSnapshot.processedRecords.filter(
+    (record) =>
+      selectedReportEmployeeId === "all" ||
+      record.employeeId === selectedReportEmployeeId
+  );
+  const dailyReportSnapshot = {
+    ...dailyMarkingSnapshot,
+    summaryRows: filteredDailySummaryRows,
+    processedRecords: filteredDailyRecords,
+    totals: {
+      employeeCount: filteredDailySummaryRows.length,
+      recordCount: filteredDailyRecords.length,
+      openCount: filteredDailyRecords.filter((record) => !record.checkOut).length,
+      completedCount: filteredDailyRecords.filter((record) => record.checkOut)
+        .length,
+      workedHours: filteredDailySummaryRows.reduce(
+        (total, row) => total + row.totalWorkedHours,
+        0
+      ),
+      overtimeHours: filteredDailySummaryRows.reduce(
+        (total, row) => total + row.overtimeHours,
+        0
+      ),
+      totalPay: filteredDailySummaryRows.reduce(
+        (total, row) => total + row.overtimePay,
+        0
+      ),
+    },
+  };
   const visibleSummaryRows = payroll.summaryRows.filter(
     (row) => row.recordCount > 0 || row.overtimeHours > 0
   );
@@ -704,7 +743,7 @@ function App() {
   }
 
   function exportDailyReport() {
-    exportDailyMarkingWorkbook(dailyMarkingSnapshot);
+    exportDailyMarkingWorkbook(dailyReportSnapshot);
     showNotice("success", "Reporte diario de marcaciones exportado.");
   }
 
@@ -1432,6 +1471,22 @@ function App() {
                       onChange={(event) => setSelectedReportDate(event.target.value)}
                     />
                   </label>
+                  <label>
+                    Colaborador en reporte
+                    <select
+                      value={selectedReportEmployeeId}
+                      onChange={(event) =>
+                        setSelectedReportEmployeeId(event.target.value)
+                      }
+                    >
+                      <option value="all">Todos los colaboradores</option>
+                      {collaborators.map((collaborator) => (
+                        <option key={collaborator.id} value={collaborator.id}>
+                          {collaborator.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                 </div>
 
                 <div className="report-stack">
@@ -1484,29 +1539,31 @@ function App() {
                     <h2>Resumen de marcaciones del dia</h2>
                   </div>
                   <span className="panel-meta">
-                    {formatDateLabel(selectedReportDate)}
+                    {selectedReportCollaborator
+                      ? `${formatDateLabel(selectedReportDate)} - ${selectedReportCollaborator.name}`
+                      : formatDateLabel(selectedReportDate)}
                   </span>
                 </div>
 
                 <div className="slip-summary slip-summary-compact report-summary-grid">
                   <StatCard
                     label="Colaboradores"
-                    value={String(dailyMarkingSnapshot.totals.employeeCount)}
+                    value={String(dailyReportSnapshot.totals.employeeCount)}
                     caption="Personas con al menos una marcacion en el dia"
                   />
                   <StatCard
                     label="Tramos"
-                    value={String(dailyMarkingSnapshot.totals.recordCount)}
+                    value={String(dailyReportSnapshot.totals.recordCount)}
                     caption="Entradas y salidas registradas por bloques"
                   />
                   <StatCard
                     label="Entradas abiertas"
-                    value={String(dailyMarkingSnapshot.totals.openCount)}
+                    value={String(dailyReportSnapshot.totals.openCount)}
                     caption="Sirve para ver quien marco entrada y no ha salido"
                   />
                   <StatCard
                     label="Horas trabajadas"
-                    value={formatHours(dailyMarkingSnapshot.totals.workedHours)}
+                    value={formatHours(dailyReportSnapshot.totals.workedHours)}
                     caption="Suma del dia con cortes como almuerzo incluidos"
                   />
                 </div>
@@ -1525,7 +1582,7 @@ function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {dailyMarkingSnapshot.summaryRows.map((row) => (
+                      {dailyReportSnapshot.summaryRows.map((row) => (
                         <tr key={`${row.employeeId}-${row.date}`}>
                           <td>{row.collaborator.name}</td>
                           <td>{row.collaborator.documentId}</td>
@@ -1536,7 +1593,7 @@ function App() {
                           <td>{row.statusLabel}</td>
                         </tr>
                       ))}
-                      {dailyMarkingSnapshot.summaryRows.length === 0 ? (
+                      {dailyReportSnapshot.summaryRows.length === 0 ? (
                         <tr>
                           <td colSpan="7">
                             <span className="empty-state">
@@ -1573,7 +1630,7 @@ function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {dailyMarkingSnapshot.processedRecords.map((record) => (
+                      {dailyReportSnapshot.processedRecords.map((record) => (
                         <tr key={record.id}>
                           <td>{record.collaborator.name}</td>
                           <td>{record.collaborator.documentId}</td>
@@ -1585,7 +1642,7 @@ function App() {
                           <td>{record.checkOut ? "Completo" : "Entrada abierta"}</td>
                         </tr>
                       ))}
-                      {dailyMarkingSnapshot.processedRecords.length === 0 ? (
+                      {dailyReportSnapshot.processedRecords.length === 0 ? (
                         <tr>
                           <td colSpan="8">
                             <span className="empty-state">
