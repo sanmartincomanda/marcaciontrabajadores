@@ -971,6 +971,13 @@ button {
     0 0 0 1px rgba(15, 209, 123, 0.14);
 }
 
+.camera-button:disabled {
+  opacity: 0.46;
+  cursor: not-allowed;
+  border-color: rgba(103, 242, 255, 0.12);
+  box-shadow: none;
+}
+
 .camera-button:hover {
   border-color: rgba(103, 242, 255, 0.42);
 }
@@ -1562,6 +1569,12 @@ input:focus,
 select:focus {
   border-color: rgba(166, 64, 36, 0.5);
   box-shadow: 0 0 0 4px rgba(166, 64, 36, 0.08);
+}
+
+input:disabled,
+select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .button-row {

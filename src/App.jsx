@@ -17,6 +17,15 @@ import {
   buildPayrollSnapshot,
 } from "./utils/payroll";
 import {
+  deleteRecordFromCloud,
+  ensureCloudSession,
+  getCloudSyncError,
+  isCloudSyncEnabled,
+  saveRecordToCloud,
+  saveSettingsToCloud,
+  subscribeToCloudData,
+} from "./services/firebaseStore";
+import {
   formatCompactHours,
   formatCurrency,
   formatDateLabel,
@@ -28,17 +37,12 @@ import {
   toInputTime,
 } from "./utils/time";
 
-const SETTINGS_KEY = "horas-extras/settings-v1";
-const RECORDS_KEY = "horas-extras/records-v1";
-
 const tabs = [
   { id: "marcacion", label: "Terminal de marcacion" },
   { id: "resumen", label: "Resumen semanal" },
   { id: "manual", label: "Ingreso manual" },
   { id: "reportes", label: "Reportes y descargas" },
 ];
-
-const AUTH_SESSION_KEY = "horas-extras/auth-v1";
 
 const APP_USERS = {
   admin: {
@@ -57,13 +61,12 @@ const APP_USERS = {
   },
 };
 
-function loadStored(key, fallback) {
-  try {
-    const raw = window.localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : fallback;
-  } catch {
-    return fallback;
-  }
+function buildDefaultSettings(date = new Date()) {
+  return {
+    weekStart: getMonday(date),
+    standardHoursPerDay: 8,
+    overtimeMultiplier: 2,
+  };
 }
 
 function getInitialTab() {
@@ -86,11 +89,6 @@ function resolveAccessibleTab(tabId, username) {
   return allowedTabs.some((tab) => tab.id === tabId)
     ? tabId
     : (allowedTabs[0]?.id ?? "marcacion");
-}
-
-function getStoredSession() {
-  const storedSession = loadStored(AUTH_SESSION_KEY, null);
-  return APP_USERS[storedSession?.username] ? storedSession : null;
 }
 
 function createManualForm(weekStart, employeeId = collaborators[0]?.id ?? "") {
@@ -131,6 +129,28 @@ function describeCameraError(error) {
   return "No pude iniciar la cámara. Revisa permisos o vuelve a intentarlo.";
 }
 
+function describeCloudSyncError(error) {
+  const code = String(error?.code || "");
+
+  if (code === "auth/operation-not-allowed") {
+    return "Activa el acceso anonimo en Firebase Authentication para conectar la app.";
+  }
+
+  if (code === "permission-denied") {
+    return "Firebase rechazo el acceso. Revisa las reglas de Firestore.";
+  }
+
+  if (code === "unavailable") {
+    return "No pude conectar con Firebase en este momento. Revisa la red.";
+  }
+
+  if (code === "unauthenticated") {
+    return "La sesion con Firebase no esta autorizada. Vuelve a cargar la app.";
+  }
+
+  return error?.message || "No pude sincronizar la informacion con Firebase.";
+}
+
 async function optimizeCameraTrackForSmallBarcode(videoElement) {
   const stream = videoElement?.srcObject;
   const track = stream?.getVideoTracks?.()?.[0];
@@ -169,29 +189,18 @@ async function optimizeCameraTrackForSmallBarcode(videoElement) {
 }
 
 function App() {
-  const defaultWeekStart = getMonday(new Date());
-  const [selectedTab, setSelectedTab] = useState(() => {
-    const storedSession = getStoredSession();
-    return storedSession
-      ? resolveAccessibleTab(getInitialTab(), storedSession.username)
-      : getInitialTab();
-  });
-  const [currentUser, setCurrentUser] = useState(getStoredSession);
+  const [defaultSettings] = useState(() => buildDefaultSettings());
+  const [selectedTab, setSelectedTab] = useState(getInitialTab);
+  const [currentUser, setCurrentUser] = useState(null);
   const [loginForm, setLoginForm] = useState({
     username: "",
     password: "",
   });
   const [authError, setAuthError] = useState("");
-  const [settings, setSettings] = useState(() =>
-    loadStored(SETTINGS_KEY, {
-      weekStart: defaultWeekStart,
-      standardHoursPerDay: 8,
-      overtimeMultiplier: 2,
-    })
-  );
-  const [records, setRecords] = useState(() => loadStored(RECORDS_KEY, []));
+  const [settings, setSettings] = useState(defaultSettings);
+  const [records, setRecords] = useState([]);
   const [manualForm, setManualForm] = useState(() =>
-    createManualForm(defaultWeekStart)
+    createManualForm(defaultSettings.weekStart)
   );
   const [editingRecordId, setEditingRecordId] = useState(null);
   const [selectedSlipEmployeeId, setSelectedSlipEmployeeId] = useState(
@@ -209,6 +218,11 @@ function App() {
     "Usa la cámara de la tablet para leer el código de barras de la cédula."
   );
   const [cameraError, setCameraError] = useState("");
+  const [syncState, setSyncState] = useState(() => ({
+    loading: isCloudSyncEnabled(),
+    ready: false,
+    error: isCloudSyncEnabled() ? "" : getCloudSyncError(),
+  }));
   const [now, setNow] = useState(() => Date.now());
   const scanInputRef = useRef(null);
   const cameraVideoRef = useRef(null);
@@ -217,23 +231,6 @@ function App() {
   const cameraLockRef = useRef(false);
   const activeUser = currentUser ? APP_USERS[currentUser.username] : null;
   const availableTabs = currentUser ? getAllowedTabs(currentUser.username) : [];
-
-  useEffect(() => {
-    window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-  }, [settings]);
-
-  useEffect(() => {
-    if (currentUser) {
-      window.localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(currentUser));
-      return;
-    }
-
-    window.localStorage.removeItem(AUTH_SESSION_KEY);
-  }, [currentUser]);
-
-  useEffect(() => {
-    window.localStorage.setItem(RECORDS_KEY, JSON.stringify(records));
-  }, [records]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
@@ -277,6 +274,80 @@ function App() {
     const timer = window.setTimeout(() => scanInputRef.current?.focus(), 80);
     return () => window.clearTimeout(timer);
   }, [selectedTab, scanResult, isCameraOpen]);
+
+  useEffect(() => {
+    if (!isCloudSyncEnabled()) {
+      return undefined;
+    }
+
+    let isCancelled = false;
+    let hasLoadedSettings = false;
+    let hasLoadedRecords = false;
+    let unsubscribe = () => {};
+
+    const markSyncReady = () => {
+      if (hasLoadedSettings && hasLoadedRecords && !isCancelled) {
+        setSyncState({
+          loading: false,
+          ready: true,
+          error: "",
+        });
+      }
+    };
+
+    ensureCloudSession()
+      .then(() => {
+        if (isCancelled) {
+          return;
+        }
+
+        unsubscribe = subscribeToCloudData({
+          defaultSettings,
+          onSettings: (nextSettings) => {
+            hasLoadedSettings = true;
+            setSettings(nextSettings);
+            setManualForm((current) =>
+              !current.date || !isDateInWeek(current.date, nextSettings.weekStart)
+                ? { ...current, date: nextSettings.weekStart }
+                : current
+            );
+            markSyncReady();
+          },
+          onRecords: (nextRecords) => {
+            hasLoadedRecords = true;
+            setRecords(nextRecords);
+            markSyncReady();
+          },
+          onError: (error) => {
+            if (isCancelled) {
+              return;
+            }
+
+            setSyncState({
+              loading: false,
+              ready: false,
+              error: describeCloudSyncError(error),
+            });
+          },
+        });
+      })
+      .catch((error) => {
+        if (isCancelled) {
+          return;
+        }
+
+        setSyncState({
+          loading: false,
+          ready: false,
+          error: describeCloudSyncError(error),
+        });
+      });
+
+    return () => {
+      isCancelled = true;
+      unsubscribe();
+    };
+  }, [defaultSettings]);
 
   const payroll = buildPayrollSnapshot(collaborators, records, settings);
   const currentWeekEnd = getWeekEnd(settings.weekStart);
@@ -361,6 +432,7 @@ function App() {
     second: "2-digit",
   });
   const isMarkingMode = selectedTab === "marcacion";
+  const canSyncData = syncState.ready && !syncState.error;
 
   function showNotice(type, text) {
     setNotice({ id: crypto.randomUUID(), type, text });
@@ -387,17 +459,75 @@ function App() {
     setSelectedTab(tabId);
   }
 
-  function handleWeekStartChange(nextWeekStart) {
-    setSettings((current) => ({
-      ...current,
-      weekStart: nextWeekStart,
-    }));
+  async function handleWeekStartChange(nextWeekStart) {
+    if (!canSyncData) {
+      showNotice("error", syncState.error || "Firebase aun no esta listo.");
+      return;
+    }
 
+    const previousSettings = settings;
+    const nextSettings = {
+      ...settings,
+      weekStart: nextWeekStart,
+    };
+
+    setSettings(nextSettings);
     setManualForm((current) =>
       !current.date || !isDateInWeek(current.date, nextWeekStart)
         ? { ...current, date: nextWeekStart }
         : current
     );
+
+    try {
+      await saveSettingsToCloud(nextSettings);
+    } catch (error) {
+      setSettings(previousSettings);
+      showNotice("error", describeCloudSyncError(error));
+    }
+  }
+
+  async function handleStandardHoursChange(rawValue) {
+    if (!canSyncData) {
+      showNotice("error", syncState.error || "Firebase aun no esta listo.");
+      return;
+    }
+
+    const previousSettings = settings;
+    const nextSettings = {
+      ...settings,
+      standardHoursPerDay: Number(rawValue || 0),
+    };
+
+    setSettings(nextSettings);
+
+    try {
+      await saveSettingsToCloud(nextSettings);
+    } catch (error) {
+      setSettings(previousSettings);
+      showNotice("error", describeCloudSyncError(error));
+    }
+  }
+
+  async function handleOvertimeMultiplierChange(rawValue) {
+    if (!canSyncData) {
+      showNotice("error", syncState.error || "Firebase aun no esta listo.");
+      return;
+    }
+
+    const previousSettings = settings;
+    const nextSettings = {
+      ...settings,
+      overtimeMultiplier: Number(rawValue || 0),
+    };
+
+    setSettings(nextSettings);
+
+    try {
+      await saveSettingsToCloud(nextSettings);
+    } catch (error) {
+      setSettings(previousSettings);
+      showNotice("error", describeCloudSyncError(error));
+    }
   }
 
   function resetManualForm() {
@@ -405,8 +535,13 @@ function App() {
     setManualForm(createManualForm(settings.weekStart, manualForm.employeeId));
   }
 
-  function handleManualSubmit(event) {
+  async function handleManualSubmit(event) {
     event.preventDefault();
+
+    if (!canSyncData) {
+      showNotice("error", syncState.error || "Firebase aun no esta listo.");
+      return;
+    }
 
     if (!manualForm.employeeId || !manualForm.date || !manualForm.checkIn) {
       showNotice(
@@ -417,6 +552,9 @@ function App() {
     }
 
     const timestamp = new Date().toISOString();
+    const existingRecord = editingRecordId
+      ? records.find((record) => record.id === editingRecordId)
+      : null;
     const payload = {
       id: editingRecordId ?? crypto.randomUUID(),
       employeeId: manualForm.employeeId,
@@ -426,19 +564,15 @@ function App() {
       breakMinutes: Number(manualForm.breakMinutes || 0),
       source: manualForm.source,
       updatedAt: timestamp,
-      createdAt: timestamp,
+      createdAt: existingRecord?.createdAt || timestamp,
     };
 
-    setRecords((current) => {
-      if (editingRecordId) {
-        return current.map((record) =>
-          record.id === editingRecordId
-            ? { ...record, ...payload, createdAt: record.createdAt }
-            : record
-        );
-      }
-      return [payload, ...current];
-    });
+    try {
+      await saveRecordToCloud(payload);
+    } catch (error) {
+      showNotice("error", describeCloudSyncError(error));
+      return;
+    }
 
     showNotice(
       "success",
@@ -463,15 +597,35 @@ function App() {
     });
   }
 
-  function handleDeleteRecord(recordId) {
-    setRecords((current) => current.filter((record) => record.id !== recordId));
+  async function handleDeleteRecord(recordId) {
+    if (!canSyncData) {
+      showNotice("error", syncState.error || "Firebase aun no esta listo.");
+      return;
+    }
+
+    try {
+      await deleteRecordFromCloud(recordId);
+    } catch (error) {
+      showNotice("error", describeCloudSyncError(error));
+      return;
+    }
+
     if (editingRecordId === recordId) {
       resetManualForm();
     }
     showNotice("success", "Registro eliminado.");
   }
 
-  function processClockScan(rawValue) {
+  async function processClockScan(rawValue) {
+    if (!canSyncData) {
+      setScanResult({
+        type: "error",
+        title: "Firebase no disponible",
+        detail: syncState.error || "Firebase aun no esta listo.",
+      });
+      return false;
+    }
+
     const normalizedDocument = normalizeDocumentId(rawValue);
     if (!normalizedDocument) {
       setScanResult({
@@ -500,21 +654,15 @@ function App() {
     const nextTime = toInputTime(timestamp);
     const movement = activeRecord ? "Salida" : "Entrada";
 
-    if (activeRecord) {
-      setRecords((current) =>
-        current.map((record) =>
-          record.id === activeRecord.id
-            ? {
-                ...record,
-                checkOut: nextTime,
-                updatedAt: timestamp.toISOString(),
-              }
-            : record
-        )
-      );
-    } else {
-      setRecords((current) => [
-        {
+    try {
+      if (activeRecord) {
+        await saveRecordToCloud({
+          ...activeRecord,
+          checkOut: nextTime,
+          updatedAt: timestamp.toISOString(),
+        });
+      } else {
+        await saveRecordToCloud({
           id: crypto.randomUUID(),
           employeeId: collaborator.id,
           date: nextDate,
@@ -524,9 +672,16 @@ function App() {
           source: "clock",
           createdAt: timestamp.toISOString(),
           updatedAt: timestamp.toISOString(),
-        },
-        ...current,
-      ]);
+        });
+      }
+    } catch (error) {
+      setScanResult({
+        type: "error",
+        title: "No pude guardar la marcacion",
+        detail: describeCloudSyncError(error),
+      });
+      setScanValue("");
+      return false;
     }
 
     setScanResult({
@@ -542,14 +697,14 @@ function App() {
     return true;
   }
 
-  const handleDetectedBarcode = useEffectEvent((barcodeText) => {
+  const handleDetectedBarcode = useEffectEvent(async (barcodeText) => {
     if (cameraLockRef.current) {
       return;
     }
 
     cameraLockRef.current = true;
     setCameraStatus("Código detectado. Registrando marcación...");
-    const didProcess = processClockScan(barcodeText);
+    const didProcess = await processClockScan(barcodeText);
 
     if (didProcess) {
       cameraControlsRef.current?.stop?.();
@@ -671,9 +826,9 @@ function App() {
     };
   }, [isCameraOpen, isMarkingMode]);
 
-  function handleClockScan(event) {
+  async function handleClockScan(event) {
     event.preventDefault();
-    processClockScan(scanValue);
+    await processClockScan(scanValue);
   }
 
   function handleCameraToggle() {
@@ -837,6 +992,18 @@ function App() {
               <div className="notice notice-error auth-notice">{authError}</div>
             ) : null}
 
+            {syncState.loading ? (
+              <div className="notice auth-notice">
+                Conectando la app con Firebase...
+              </div>
+            ) : null}
+
+            {syncState.error ? (
+              <div className="notice notice-error auth-notice">
+                {syncState.error}
+              </div>
+            ) : null}
+
             <button type="submit" className="primary-button">
               Entrar
             </button>
@@ -915,6 +1082,7 @@ function App() {
                 <input
                   type="date"
                   value={settings.weekStart}
+                  disabled={!canSyncData}
                   onChange={(event) => handleWeekStartChange(event.target.value)}
                 />
               </label>
@@ -926,11 +1094,9 @@ function App() {
                   min="1"
                   step="0.5"
                   value={settings.standardHoursPerDay}
+                  disabled={!canSyncData}
                   onChange={(event) =>
-                    setSettings((current) => ({
-                      ...current,
-                      standardHoursPerDay: Number(event.target.value || 0),
-                    }))
+                    handleStandardHoursChange(event.target.value)
                   }
                 />
               </label>
@@ -942,11 +1108,9 @@ function App() {
                   min="1"
                   step="0.25"
                   value={settings.overtimeMultiplier}
+                  disabled={!canSyncData}
                   onChange={(event) =>
-                    setSettings((current) => ({
-                      ...current,
-                      overtimeMultiplier: Number(event.target.value || 0),
-                    }))
+                    handleOvertimeMultiplierChange(event.target.value)
                   }
                 />
               </label>
@@ -1011,6 +1175,14 @@ function App() {
         <div className={`notice notice-${notice.type}`}>{notice.text}</div>
       ) : null}
 
+      {syncState.loading ? (
+        <div className="notice">Sincronizando informacion con Firebase...</div>
+      ) : null}
+
+      {syncState.error ? (
+        <div className="notice notice-error">{syncState.error}</div>
+      ) : null}
+
       {isMarkingMode ? (
         <main className="marking-shell">
           <section className="marking-terminal">
@@ -1052,6 +1224,7 @@ function App() {
                       inputMode="text"
                       placeholder="ESCRIBE TU CEDULA"
                       value={scanValue}
+                      disabled={!canSyncData}
                       onChange={(event) =>
                         setScanValue(event.target.value.toUpperCase())
                       }
@@ -1060,6 +1233,7 @@ function App() {
                   <button
                     type="button"
                     className={isCameraOpen ? "camera-button active" : "camera-button"}
+                    disabled={!canSyncData}
                     onClick={handleCameraToggle}
                   >
                     {isCameraOpen ? "Cerrar camara" : "Escanear con la camara"}
@@ -1276,6 +1450,7 @@ function App() {
                     Colaborador
                     <select
                       value={manualForm.employeeId}
+                      disabled={!canSyncData}
                       onChange={(event) =>
                         setManualForm((current) => ({
                           ...current,
@@ -1297,6 +1472,7 @@ function App() {
                       <input
                         type="date"
                         value={manualForm.date}
+                        disabled={!canSyncData}
                         onChange={(event) =>
                           setManualForm((current) => ({
                             ...current,
@@ -1313,6 +1489,7 @@ function App() {
                         min="0"
                         step="15"
                         value={manualForm.breakMinutes}
+                        disabled={!canSyncData}
                         onChange={(event) =>
                           setManualForm((current) => ({
                             ...current,
@@ -1329,6 +1506,7 @@ function App() {
                       <input
                         type="time"
                         value={manualForm.checkIn}
+                        disabled={!canSyncData}
                         onChange={(event) =>
                           setManualForm((current) => ({
                             ...current,
@@ -1343,6 +1521,7 @@ function App() {
                       <input
                         type="time"
                         value={manualForm.checkOut}
+                        disabled={!canSyncData}
                         onChange={(event) =>
                           setManualForm((current) => ({
                             ...current,
@@ -1357,6 +1536,7 @@ function App() {
                     Tipo de registro
                     <select
                       value={manualForm.source}
+                      disabled={!canSyncData}
                       onChange={(event) =>
                         setManualForm((current) => ({
                           ...current,
@@ -1370,7 +1550,11 @@ function App() {
                   </label>
 
                   <div className="button-row">
-                    <button type="submit" className="primary-button">
+                    <button
+                      type="submit"
+                      className="primary-button"
+                      disabled={!canSyncData}
+                    >
                       {editingRecordId ? "Guardar cambios" : "Agregar registro"}
                     </button>
                     <button
@@ -1437,6 +1621,7 @@ function App() {
                               <button
                                 type="button"
                                 className="mini-button danger"
+                                disabled={!canSyncData}
                                 onClick={() => handleDeleteRecord(record.id)}
                               >
                                 Eliminar
