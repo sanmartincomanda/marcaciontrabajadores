@@ -11,51 +11,78 @@ function round(value) {
   return Number(Number(value || 0).toFixed(2));
 }
 
-export function buildPayrollSnapshot(collaborators, records, settings) {
-  const collaboratorById = Object.fromEntries(
+function buildCollaboratorById(collaborators) {
+  return Object.fromEntries(
     collaborators.map((collaborator) => [collaborator.id, collaborator])
   );
+}
 
-  const weekRecords = records
-    .filter((record) => isDateInWeek(record.date, settings.weekStart))
+function buildRates(collaborator, settings) {
+  const ordinaryRate = collaborator.salary / 30 / 8;
+  const overtimeRate = ordinaryRate * Number(settings.overtimeMultiplier || 2);
+
+  return {
+    ordinaryRate: round(ordinaryRate),
+    overtimeRate: round(overtimeRate),
+  };
+}
+
+function getRecordSortTime(record, field = "checkIn") {
+  const timeValue = record?.[field] || record?.checkIn || "00:00";
+  return new Date(`${record.date}T${timeValue}:00`).getTime();
+}
+
+function sortProcessedRecords(left, right) {
+  const dateDiff = left.date.localeCompare(right.date);
+  if (dateDiff !== 0) {
+    return dateDiff;
+  }
+
+  const collaboratorDiff = left.collaborator.name.localeCompare(
+    right.collaborator.name
+  );
+  if (collaboratorDiff !== 0) {
+    return collaboratorDiff;
+  }
+
+  const checkInDiff = (left.checkIn || "").localeCompare(right.checkIn || "");
+  if (checkInDiff !== 0) {
+    return checkInDiff;
+  }
+
+  return (left.createdAt || "").localeCompare(right.createdAt || "");
+}
+
+function enrichRecords(collaborators, records, settings) {
+  const collaboratorById = buildCollaboratorById(collaborators);
+
+  return records
     .map((record) => {
       const collaborator = collaboratorById[record.employeeId];
       if (!collaborator) {
         return null;
       }
 
-      const ordinaryRate = collaborator.salary / 30 / 8;
-      const overtimeRate = ordinaryRate * Number(settings.overtimeMultiplier || 2);
+      const { ordinaryRate, overtimeRate } = buildRates(collaborator, settings);
       const workedHours = calculateWorkedHours(record);
 
       return {
         ...record,
         collaborator,
         dayLabel: getDayLabel(record.date),
-        ordinaryRate: round(ordinaryRate),
-        overtimeRate: round(overtimeRate),
+        ordinaryRate,
+        overtimeRate,
         workedHours: round(workedHours),
       };
     })
     .filter(Boolean)
-    .sort((left, right) => {
-      const dateDiff = left.date.localeCompare(right.date);
-      if (dateDiff !== 0) {
-        return dateDiff;
-      }
+    .sort(sortProcessedRecords);
+}
 
-      const collaboratorDiff = left.collaborator.name.localeCompare(
-        right.collaborator.name
-      );
-      if (collaboratorDiff !== 0) {
-        return collaboratorDiff;
-      }
-
-      return (left.checkIn || "").localeCompare(right.checkIn || "");
-    });
-
+function buildDailySummaries(processedRecords, settings) {
   const dailyMap = new Map();
-  for (const record of weekRecords) {
+
+  for (const record of processedRecords) {
     const key = `${record.employeeId}__${record.date}`;
     const current =
       dailyMap.get(key) ??
@@ -69,28 +96,59 @@ export function buildPayrollSnapshot(collaborators, records, settings) {
         records: [],
         totalWorkedHours: 0,
         totalBreakMinutes: 0,
+        lastMovementAt: "",
+        lastMovementType: "",
       };
 
     current.records.push(record);
     current.totalWorkedHours += record.workedHours;
     current.totalBreakMinutes += Number(record.breakMinutes || 0);
+
+    const lastMovementAt = record.checkOut
+      ? new Date(`${record.date}T${record.checkOut}:00`).toISOString()
+      : new Date(`${record.date}T${record.checkIn || "00:00"}:00`).toISOString();
+
+    if (!current.lastMovementAt || lastMovementAt > current.lastMovementAt) {
+      current.lastMovementAt = lastMovementAt;
+      current.lastMovementType = record.checkOut ? "Salida" : "Entrada";
+    }
+
     dailyMap.set(key, current);
   }
 
-  const dailySummaries = Array.from(dailyMap.values())
+  return Array.from(dailyMap.values())
     .map((entry) => {
+      const records = [...entry.records].sort((left, right) =>
+        getRecordSortTime(left) - getRecordSortTime(right)
+      );
       const overtimeHours = Math.max(
         entry.totalWorkedHours - Number(settings.standardHoursPerDay || 8),
         0
       );
       const overtimePay = overtimeHours * entry.overtimeRate;
+      const openRecordCount = records.filter((record) => !record.checkOut).length;
+      const completedRecordCount = records.length - openRecordCount;
+
+      let statusLabel = "Completo";
+      if (openRecordCount > 0 && completedRecordCount > 0) {
+        statusLabel = "Con turno abierto";
+      } else if (openRecordCount > 0) {
+        statusLabel = "Entrada abierta";
+      } else if (records.length > 1) {
+        statusLabel = "Varios tramos";
+      }
 
       return {
         ...entry,
+        records,
+        recordCount: records.length,
+        openRecordCount,
+        completedRecordCount,
+        statusLabel,
         totalWorkedHours: round(entry.totalWorkedHours),
         overtimeHours: round(overtimeHours),
         overtimePay: round(overtimePay),
-        scheduleLabel: entry.records
+        scheduleLabel: records
           .map((record) =>
             record.checkOut
               ? `${record.checkIn} - ${record.checkOut}`
@@ -106,6 +164,14 @@ export function buildPayrollSnapshot(collaborators, records, settings) {
       }
       return left.collaborator.name.localeCompare(right.collaborator.name);
     });
+}
+
+export function buildPayrollSnapshot(collaborators, records, settings) {
+  const processedRecords = enrichRecords(collaborators, records, settings);
+  const weekRecords = processedRecords.filter((record) =>
+    isDateInWeek(record.date, settings.weekStart)
+  );
+  const dailySummaries = buildDailySummaries(weekRecords, settings);
 
   const summaryRows = collaborators.map((collaborator) => {
     const employeeDays = dailySummaries.filter(
@@ -119,14 +185,13 @@ export function buildPayrollSnapshot(collaborators, records, settings) {
       employeeDays.map((summary) => summary.overtimeHours)
     );
     const totalPay = sumNumbers(employeeDays.map((summary) => summary.overtimePay));
-    const ordinaryRate = collaborator.salary / 30 / 8;
-    const overtimeRate = ordinaryRate * Number(settings.overtimeMultiplier || 2);
+    const { ordinaryRate, overtimeRate } = buildRates(collaborator, settings);
 
     return {
       collaborator,
       salary: round(collaborator.salary),
-      ordinaryRate: round(ordinaryRate),
-      overtimeRate: round(overtimeRate),
+      ordinaryRate,
+      overtimeRate,
       totalWorkedHours: round(totalWorkedHours),
       overtimeHours: round(overtimeHours),
       totalPay: round(totalPay),
@@ -162,6 +227,37 @@ export function buildPayrollSnapshot(collaborators, records, settings) {
             .map((record) => record.workedHours)
         )
       ),
+    },
+  };
+}
+
+export function buildDailyMarkingSnapshot(
+  collaborators,
+  records,
+  settings,
+  reportDate
+) {
+  const processedRecords = enrichRecords(collaborators, records, settings).filter(
+    (record) => record.date === reportDate
+  );
+  const summaryRows = buildDailySummaries(processedRecords, settings).sort(
+    (left, right) =>
+      left.collaborator.name.localeCompare(right.collaborator.name) ||
+      left.date.localeCompare(right.date)
+  );
+
+  return {
+    reportDate,
+    processedRecords,
+    summaryRows,
+    totals: {
+      employeeCount: summaryRows.length,
+      recordCount: processedRecords.length,
+      openCount: processedRecords.filter((record) => !record.checkOut).length,
+      completedCount: processedRecords.filter((record) => record.checkOut).length,
+      workedHours: round(sumNumbers(summaryRows.map((row) => row.totalWorkedHours))),
+      overtimeHours: round(sumNumbers(summaryRows.map((row) => row.overtimeHours))),
+      totalPay: round(sumNumbers(summaryRows.map((row) => row.overtimePay))),
     },
   };
 }

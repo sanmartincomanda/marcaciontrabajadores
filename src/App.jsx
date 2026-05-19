@@ -9,9 +9,13 @@ import {
 import {
   exportAllSlipsWorkbook,
   exportConsolidatedWorkbook,
+  exportDailyMarkingWorkbook,
   exportIndividualSlipWorkbook,
 } from "./utils/exporters";
-import { buildPayrollSnapshot } from "./utils/payroll";
+import {
+  buildDailyMarkingSnapshot,
+  buildPayrollSnapshot,
+} from "./utils/payroll";
 import {
   formatCompactHours,
   formatCurrency,
@@ -193,6 +197,9 @@ function App() {
   const [selectedSlipEmployeeId, setSelectedSlipEmployeeId] = useState(
     collaborators[0]?.id ?? ""
   );
+  const [selectedReportDate, setSelectedReportDate] = useState(() =>
+    toInputDate(new Date())
+  );
   const [notice, setNotice] = useState(null);
   const [scanValue, setScanValue] = useState("");
   const [scanResult, setScanResult] = useState(null);
@@ -272,12 +279,30 @@ function App() {
 
   const payroll = buildPayrollSnapshot(collaborators, records, settings);
   const currentWeekEnd = getWeekEnd(settings.weekStart);
+  const dailyMarkingSnapshot = buildDailyMarkingSnapshot(
+    collaborators,
+    records,
+    settings,
+    selectedReportDate
+  );
   const visibleSummaryRows = payroll.summaryRows.filter(
     (row) => row.recordCount > 0 || row.overtimeHours > 0
   );
   const activeRecords = records.reduce((collection, record) => {
     if (!record.checkOut) {
-      collection[record.employeeId] = record;
+      const current = collection[record.employeeId];
+      const currentTime = current
+        ? new Date(
+            `${current.date}T${current.checkIn || "00:00"}:00`
+          ).getTime()
+        : -Infinity;
+      const nextTime = new Date(
+        `${record.date}T${record.checkIn || "00:00"}:00`
+      ).getTime();
+
+      if (!current || nextTime >= currentTime) {
+        collection[record.employeeId] = record;
+      }
     }
     return collection;
   }, {});
@@ -676,6 +701,11 @@ function App() {
   function exportConsolidated() {
     exportConsolidatedWorkbook(payroll);
     showNotice("success", "Consolidado exportado a Excel.");
+  }
+
+  function exportDailyReport() {
+    exportDailyMarkingWorkbook(dailyMarkingSnapshot);
+    showNotice("success", "Reporte diario de marcaciones exportado.");
   }
 
   function exportSlip() {
@@ -1388,15 +1418,33 @@ function App() {
               <section className="panel">
                 <div className="panel-heading">
                   <div>
-                    <span className="panel-kicker">Descargas</span>
-                    <h2>Excel y colillas</h2>
+                    <span className="panel-kicker">Reporte diario</span>
+                    <h2>Marcaciones y exportaciones</h2>
                   </div>
+                </div>
+
+                <div className="form-grid">
+                  <label>
+                    Fecha de marcacion
+                    <input
+                      type="date"
+                      value={selectedReportDate}
+                      onChange={(event) => setSelectedReportDate(event.target.value)}
+                    />
+                  </label>
                 </div>
 
                 <div className="report-stack">
                   <button
                     type="button"
                     className="primary-button"
+                    onClick={exportDailyReport}
+                  >
+                    Descargar reporte diario
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost-button"
                     onClick={exportConsolidated}
                   >
                     Descargar consolidado semanal
@@ -1427,6 +1475,128 @@ function App() {
                 <button type="button" className="primary-button" onClick={exportSlip}>
                   Descargar colilla individual
                 </button>
+              </section>
+
+              <section className="panel panel-wide">
+                <div className="panel-heading">
+                  <div>
+                    <span className="panel-kicker">Fecha seleccionada</span>
+                    <h2>Resumen de marcaciones del dia</h2>
+                  </div>
+                  <span className="panel-meta">
+                    {formatDateLabel(selectedReportDate)}
+                  </span>
+                </div>
+
+                <div className="slip-summary slip-summary-compact report-summary-grid">
+                  <StatCard
+                    label="Colaboradores"
+                    value={String(dailyMarkingSnapshot.totals.employeeCount)}
+                    caption="Personas con al menos una marcacion en el dia"
+                  />
+                  <StatCard
+                    label="Tramos"
+                    value={String(dailyMarkingSnapshot.totals.recordCount)}
+                    caption="Entradas y salidas registradas por bloques"
+                  />
+                  <StatCard
+                    label="Entradas abiertas"
+                    value={String(dailyMarkingSnapshot.totals.openCount)}
+                    caption="Sirve para ver quien marco entrada y no ha salido"
+                  />
+                  <StatCard
+                    label="Horas trabajadas"
+                    value={formatHours(dailyMarkingSnapshot.totals.workedHours)}
+                    caption="Suma del dia con cortes como almuerzo incluidos"
+                  />
+                </div>
+
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Colaborador</th>
+                        <th>Cedula</th>
+                        <th>Tramos</th>
+                        <th>Horario(s) del dia</th>
+                        <th>Horas trabajadas</th>
+                        <th>Horas extra</th>
+                        <th>Estado</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {dailyMarkingSnapshot.summaryRows.map((row) => (
+                        <tr key={`${row.employeeId}-${row.date}`}>
+                          <td>{row.collaborator.name}</td>
+                          <td>{row.collaborator.documentId}</td>
+                          <td>{row.recordCount}</td>
+                          <td>{row.scheduleLabel}</td>
+                          <td>{formatHours(row.totalWorkedHours)}</td>
+                          <td>{formatHours(row.overtimeHours)}</td>
+                          <td>{row.statusLabel}</td>
+                        </tr>
+                      ))}
+                      {dailyMarkingSnapshot.summaryRows.length === 0 ? (
+                        <tr>
+                          <td colSpan="7">
+                            <span className="empty-state">
+                              No hay marcaciones registradas para esta fecha.
+                            </span>
+                          </td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+
+              <section className="panel panel-wide">
+                <div className="panel-heading">
+                  <div>
+                    <span className="panel-kicker">Detalle crudo</span>
+                    <h2>Marcaciones del dia</h2>
+                  </div>
+                </div>
+
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Colaborador</th>
+                        <th>Cedula</th>
+                        <th>Entrada</th>
+                        <th>Salida</th>
+                        <th>Descanso</th>
+                        <th>Horas trabajadas</th>
+                        <th>Fuente</th>
+                        <th>Estado</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {dailyMarkingSnapshot.processedRecords.map((record) => (
+                        <tr key={record.id}>
+                          <td>{record.collaborator.name}</td>
+                          <td>{record.collaborator.documentId}</td>
+                          <td>{record.checkIn || "--"}</td>
+                          <td>{record.checkOut || "Pendiente"}</td>
+                          <td>{Number(record.breakMinutes || 0)} min</td>
+                          <td>{formatHours(record.workedHours)}</td>
+                          <td>{record.source === "clock" ? "Marcacion" : "Manual"}</td>
+                          <td>{record.checkOut ? "Completo" : "Entrada abierta"}</td>
+                        </tr>
+                      ))}
+                      {dailyMarkingSnapshot.processedRecords.length === 0 ? (
+                        <tr>
+                          <td colSpan="8">
+                            <span className="empty-state">
+                              Aun no hay entradas ni salidas para la fecha seleccionada.
+                            </span>
+                          </td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
               </section>
 
               <section className="panel panel-wide">

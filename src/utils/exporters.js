@@ -34,7 +34,14 @@ function buildConsolidatedRows(snapshot) {
       row.totalPay,
     ]),
     [],
-    ["Totales", "", "", "", snapshot.totals.workedHours, snapshot.totals.overtimeHours, snapshot.totals.totalPay],
+    [
+      "Totales",
+      "",
+      "",
+      snapshot.totals.workedHours,
+      snapshot.totals.overtimeHours,
+      snapshot.totals.totalPay,
+    ],
   ];
 }
 
@@ -94,6 +101,75 @@ function buildSlipRows(snapshot, summaryRow, collaboratorDays) {
   ];
 }
 
+function buildDailyMarkingSummaryRows(snapshot) {
+  return [
+    ["CARNES SAN MARTIN GRANADA"],
+    ["Reporte diario de marcacion"],
+    ["Fecha", formatDateLabel(snapshot.reportDate)],
+    [],
+    [
+      "Colaborador",
+      "Cedula",
+      "Tramos",
+      "Horario(s) del dia",
+      "Horas trabajadas",
+      "Horas extra",
+      "Total estimado",
+      "Estado",
+    ],
+    ...snapshot.summaryRows.map((row) => [
+      row.collaborator.name,
+      row.collaborator.documentId,
+      row.recordCount,
+      row.scheduleLabel,
+      row.totalWorkedHours,
+      row.overtimeHours,
+      row.overtimePay,
+      row.statusLabel,
+    ]),
+    [],
+    [
+      "Totales",
+      "",
+      snapshot.totals.recordCount,
+      "",
+      snapshot.totals.workedHours,
+      snapshot.totals.overtimeHours,
+      snapshot.totals.totalPay,
+      `${snapshot.totals.openCount} abierto(s)`,
+    ],
+  ];
+}
+
+function buildDailyMarkingRawRows(snapshot) {
+  return [
+    ["CARNES SAN MARTIN GRANADA"],
+    ["Marcaciones del dia"],
+    ["Fecha", formatDateLabel(snapshot.reportDate)],
+    [],
+    [
+      "Colaborador",
+      "Cedula",
+      "Entrada",
+      "Salida",
+      "Descanso (min)",
+      "Horas trabajadas",
+      "Fuente",
+      "Estado",
+    ],
+    ...snapshot.processedRecords.map((record) => [
+      record.collaborator.name,
+      record.collaborator.documentId,
+      record.checkIn || "",
+      record.checkOut || "",
+      Number(record.breakMinutes || 0),
+      record.workedHours,
+      record.source === "clock" ? "Marcacion" : "Manual",
+      record.checkOut ? "Completo" : "Entrada abierta",
+    ]),
+  ];
+}
+
 export function exportConsolidatedWorkbook(snapshot) {
   const workbook = XLSX.utils.book_new();
 
@@ -113,6 +189,24 @@ export function exportConsolidatedWorkbook(snapshot) {
     workbook,
     `consolidado-horas-extras-${snapshot.weekStart}-${getWeekEnd(snapshot.weekStart)}.xlsx`
   );
+}
+
+export function exportDailyMarkingWorkbook(snapshot) {
+  const workbook = XLSX.utils.book_new();
+
+  XLSX.utils.book_append_sheet(
+    workbook,
+    buildSheet(buildDailyMarkingSummaryRows(snapshot), [34, 16, 10, 34, 18, 14, 16, 18]),
+    "Resumen dia"
+  );
+
+  XLSX.utils.book_append_sheet(
+    workbook,
+    buildSheet(buildDailyMarkingRawRows(snapshot), [34, 16, 12, 12, 14, 16, 12, 16]),
+    "Marcaciones dia"
+  );
+
+  XLSX.writeFile(workbook, `reporte-marcaciones-${snapshot.reportDate}.xlsx`);
 }
 
 export function exportIndividualSlipWorkbook(snapshot, employeeId) {
