@@ -132,6 +132,10 @@ function describeCameraError(error) {
 function describeCloudSyncError(error) {
   const code = String(error?.code || "");
 
+  if (code === "auth/configuration-not-found") {
+    return "En Firebase Console debes activar Authentication y habilitar el metodo Anonymous para esta app.";
+  }
+
   if (code === "auth/operation-not-allowed") {
     return "Activa el acceso anonimo en Firebase Authentication para conectar la app.";
   }
