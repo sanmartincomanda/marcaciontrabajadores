@@ -21,11 +21,18 @@ function getRecordRef(recordId) {
 }
 
 function normalizeSettings(settings, fallbackSettings) {
+  const fallbackWeeklyHours =
+    fallbackSettings?.standardHoursPerWeek ??
+    Number(fallbackSettings?.standardHoursPerDay || 8) * 6;
+  const weeklyHours =
+    settings?.standardHoursPerWeek ??
+    (settings?.standardHoursPerDay != null
+      ? Number(settings.standardHoursPerDay || 8) * 6
+      : fallbackWeeklyHours);
+
   return {
     weekStart: settings?.weekStart || fallbackSettings.weekStart,
-    standardHoursPerDay: Number(
-      settings?.standardHoursPerDay ?? fallbackSettings.standardHoursPerDay
-    ),
+    standardHoursPerWeek: Number(weeklyHours),
     overtimeMultiplier: Number(
       settings?.overtimeMultiplier ?? fallbackSettings.overtimeMultiplier
     ),

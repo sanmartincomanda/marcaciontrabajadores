@@ -18,7 +18,7 @@ Aplicacion web para calcular horas extras semanales por colaborador, registrar e
 
 ## Flujo de uso
 
-1. Define la semana, la jornada ordinaria y el multiplicador de hora extra.
+1. Define la semana, la jornada ordinaria semanal y el multiplicador de hora extra.
 2. Registra horarios manualmente o marca entrada/salida desde la pantalla de marcacion.
 3. Revisa el resumen semanal.
 4. Descarga el consolidado o las colillas en Excel.

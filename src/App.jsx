@@ -64,7 +64,7 @@ const APP_USERS = {
 function buildDefaultSettings(date = new Date()) {
   return {
     weekStart: getMonday(date),
-    standardHoursPerDay: 8,
+    standardHoursPerWeek: 48,
     overtimeMultiplier: 2,
   };
 }
@@ -499,7 +499,7 @@ function App() {
     const previousSettings = settings;
     const nextSettings = {
       ...settings,
-      standardHoursPerDay: Number(rawValue || 0),
+      standardHoursPerWeek: Number(rawValue || 0),
     };
 
     setSettings(nextSettings);
@@ -1058,7 +1058,7 @@ function App() {
                 <StatCard
                   label="Horas extra"
                   value={formatHours(payroll.totals.overtimeHours)}
-                  caption="Calculadas con base en la jornada diaria configurada"
+                  caption="Calculadas segun el acumulado semanal configurado"
                 />
                 <StatCard
                   label="Pago estimado"
@@ -1068,7 +1068,7 @@ function App() {
                 <StatCard
                   label="Trabajadores con extra"
                   value={String(payroll.workersWithOvertime)}
-                  caption="Solo quienes superaron la jornada ordinaria"
+                  caption="Solo quienes superaron la jornada ordinaria semanal"
                 />
                 <StatCard
                   label="Marcaciones abiertas"
@@ -1092,12 +1092,12 @@ function App() {
               </label>
 
               <label>
-                Jornada ordinaria (horas)
+                Jornada ordinaria semanal (horas)
                 <input
                   type="number"
                   min="1"
                   step="0.5"
-                  value={settings.standardHoursPerDay}
+                  value={settings.standardHoursPerWeek}
                   disabled={!canSyncData}
                   onChange={(event) =>
                     handleStandardHoursChange(event.target.value)
@@ -1124,7 +1124,9 @@ function App() {
               <strong>Regla actual</strong>
               <p>
                 La app toma el salario mensual ya cargado, calcula la hora ordinaria
-                como salario/30/8 y multiplica la hora extra por{" "}
+                como salario/30/8. Las horas extra se activan cuando el
+                colaborador supera {formatCompactHours(settings.standardHoursPerWeek)}{" "}
+                horas en la semana y se multiplican por{" "}
                 {formatCompactHours(settings.overtimeMultiplier)}.
               </p>
             </div>
@@ -1595,6 +1597,7 @@ function App() {
                         <th>Salida</th>
                         <th>Descanso</th>
                         <th>Horas trabajadas</th>
+                        <th>Horas extra</th>
                         <th>Fuente</th>
                         <th>Acciones</th>
                       </tr>
@@ -1612,6 +1615,7 @@ function App() {
                           <td>{record.checkOut || "Pendiente"}</td>
                           <td>{Number(record.breakMinutes || 0)} min</td>
                           <td>{formatHours(record.workedHours)}</td>
+                          <td>{formatHours(record.overtimeHours)}</td>
                           <td>{record.source === "clock" ? "Marcacion" : "Manual"}</td>
                           <td>
                             <div className="mini-actions">
@@ -1730,7 +1734,9 @@ function App() {
                   <span className="panel-meta">
                     {selectedReportCollaborator
                       ? `${formatDateLabel(selectedReportDate)} - ${selectedReportCollaborator.name}`
-                      : formatDateLabel(selectedReportDate)}
+                      : formatDateLabel(selectedReportDate)}{" "}
+                    | Semana del {formatDateLabel(dailyReportSnapshot.weekStart)} al{" "}
+                    {formatDateLabel(dailyReportSnapshot.weekEnd)}
                   </span>
                 </div>
 
@@ -1814,6 +1820,7 @@ function App() {
                         <th>Salida</th>
                         <th>Descanso</th>
                         <th>Horas trabajadas</th>
+                        <th>Horas extra</th>
                         <th>Fuente</th>
                         <th>Estado</th>
                       </tr>
@@ -1827,13 +1834,14 @@ function App() {
                           <td>{record.checkOut || "Pendiente"}</td>
                           <td>{Number(record.breakMinutes || 0)} min</td>
                           <td>{formatHours(record.workedHours)}</td>
+                          <td>{formatHours(record.overtimeHours)}</td>
                           <td>{record.source === "clock" ? "Marcacion" : "Manual"}</td>
                           <td>{record.checkOut ? "Completo" : "Entrada abierta"}</td>
                         </tr>
                       ))}
                       {dailyReportSnapshot.processedRecords.length === 0 ? (
                         <tr>
-                          <td colSpan="8">
+                          <td colSpan="9">
                             <span className="empty-state">
                               Aun no hay entradas ni salidas para la fecha seleccionada.
                             </span>

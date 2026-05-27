@@ -59,6 +59,7 @@ function buildRawRows(snapshot) {
       "Salida",
       "Descanso (min)",
       "Horas trabajadas",
+      "Horas extra",
       "Fuente",
       "Estado",
     ],
@@ -70,6 +71,7 @@ function buildRawRows(snapshot) {
       record.checkOut || "",
       Number(record.breakMinutes || 0),
       record.workedHours,
+      record.overtimeHours,
       record.source === "clock" ? "Marcacion" : "Manual",
       record.checkOut ? "Completo" : "Pendiente",
     ]),
@@ -106,6 +108,7 @@ function buildDailyMarkingSummaryRows(snapshot) {
     ["CARNES SAN MARTIN GRANADA"],
     ["Reporte diario de marcacion"],
     ["Fecha", formatDateLabel(snapshot.reportDate)],
+    ["Semana legal", formatDateLabel(snapshot.weekStart), "Semana al", formatDateLabel(snapshot.weekEnd)],
     [],
     [
       "Colaborador",
@@ -154,6 +157,7 @@ function buildDailyMarkingRawRows(snapshot) {
       "Salida",
       "Descanso (min)",
       "Horas trabajadas",
+      "Horas extra",
       "Fuente",
       "Estado",
     ],
@@ -164,6 +168,7 @@ function buildDailyMarkingRawRows(snapshot) {
       record.checkOut || "",
       Number(record.breakMinutes || 0),
       record.workedHours,
+      record.overtimeHours,
       record.source === "clock" ? "Marcacion" : "Manual",
       record.checkOut ? "Completo" : "Entrada abierta",
     ]),
@@ -181,7 +186,7 @@ export function exportConsolidatedWorkbook(snapshot) {
 
   XLSX.utils.book_append_sheet(
     workbook,
-    buildSheet(buildRawRows(snapshot), [14, 14, 34, 12, 12, 14, 16, 12, 14]),
+    buildSheet(buildRawRows(snapshot), [14, 14, 34, 12, 12, 14, 16, 14, 12, 14]),
     "Registros"
   );
 
@@ -202,7 +207,7 @@ export function exportDailyMarkingWorkbook(snapshot) {
 
   XLSX.utils.book_append_sheet(
     workbook,
-    buildSheet(buildDailyMarkingRawRows(snapshot), [34, 16, 12, 12, 14, 16, 12, 16]),
+    buildSheet(buildDailyMarkingRawRows(snapshot), [34, 16, 12, 12, 14, 16, 14, 12, 16]),
     "Marcaciones dia"
   );
 
