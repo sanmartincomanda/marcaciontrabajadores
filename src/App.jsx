@@ -26,6 +26,9 @@ import {
   subscribeToCloudData,
 } from "./services/firebaseStore";
 import {
+  addDays,
+  calculateWorkedHours,
+  dayNames,
   formatCompactHours,
   formatCurrency,
   formatDateLabel,
@@ -36,6 +39,19 @@ import {
   toInputDate,
   toInputTime,
 } from "./utils/time";
+
+const WEEKLY_SHIFT_FIELDS = [
+  {
+    checkIn: "slot1CheckIn",
+    checkOut: "slot1CheckOut",
+    label: "Turno 1",
+  },
+  {
+    checkIn: "slot2CheckIn",
+    checkOut: "slot2CheckOut",
+    label: "Turno 2",
+  },
+];
 
 const tabs = [
   { id: "marcacion", label: "Terminal de marcacion" },
@@ -67,6 +83,130 @@ function buildDefaultSettings(date = new Date()) {
     standardHoursPerWeek: 48,
     overtimeMultiplier: 2,
   };
+}
+
+function roundHours(value) {
+  return Number(Number(value || 0).toFixed(2));
+}
+
+function getWeeklyCellKey(employeeId, date) {
+  return `${employeeId}__${date}`;
+}
+
+function buildWeekDates(weekStart) {
+  return Array.from({ length: 7 }, (_, index) => addDays(weekStart, index));
+}
+
+function formatDayHeader(dayName) {
+  return dayName.charAt(0).toUpperCase() + dayName.slice(1);
+}
+
+function buildWeeklyRecordMap(records, weekStart) {
+  const weekMap = {};
+
+  for (const record of records) {
+    if (!isDateInWeek(record.date, weekStart)) {
+      continue;
+    }
+
+    const key = getWeeklyCellKey(record.employeeId, record.date);
+    const current = weekMap[key] ?? [];
+    current.push(record);
+    current.sort((left, right) => {
+      const leftTime = `${left.checkIn || ""}${left.createdAt || ""}`;
+      const rightTime = `${right.checkIn || ""}${right.createdAt || ""}`;
+      return leftTime.localeCompare(rightTime);
+    });
+    weekMap[key] = current;
+  }
+
+  return weekMap;
+}
+
+function createWeeklyDayDraft(records = []) {
+  const [firstRecord, secondRecord] = records;
+  return {
+    slot1CheckIn: firstRecord?.checkIn || "",
+    slot1CheckOut: firstRecord?.checkOut || "",
+    slot2CheckIn: secondRecord?.checkIn || "",
+    slot2CheckOut: secondRecord?.checkOut || "",
+  };
+}
+
+function calculateGapHours(date, startTime, endTime) {
+  if (!date || !startTime || !endTime) {
+    return 0;
+  }
+
+  const start = new Date(`${date}T${startTime}:00`);
+  const end = new Date(`${date}T${endTime}:00`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
+    return 0;
+  }
+
+  return roundHours((end.getTime() - start.getTime()) / 36e5);
+}
+
+function buildWeeklyDayStats(date, draft, accumulatedBefore, weeklyLimit) {
+  const firstShiftHours = calculateWorkedHours({
+    date,
+    checkIn: draft.slot1CheckIn,
+    checkOut: draft.slot1CheckOut,
+    breakMinutes: 0,
+  });
+  const secondShiftHours = calculateWorkedHours({
+    date,
+    checkIn: draft.slot2CheckIn,
+    checkOut: draft.slot2CheckOut,
+    breakMinutes: 0,
+  });
+  const workedHours = roundHours(firstShiftHours + secondShiftHours);
+  const lunchHours = calculateGapHours(
+    date,
+    draft.slot1CheckOut,
+    draft.slot2CheckIn
+  );
+  const accumulatedWorkedHours = roundHours(accumulatedBefore + workedHours);
+  const previousAccumulatedOvertime = Math.max(accumulatedBefore - weeklyLimit, 0);
+  const accumulatedOvertimeHours = Math.max(
+    accumulatedWorkedHours - weeklyLimit,
+    0
+  );
+  const overtimeHours = roundHours(
+    accumulatedOvertimeHours - previousAccumulatedOvertime
+  );
+
+  return {
+    workedHours,
+    lunchHours,
+    accumulatedWorkedHours,
+    overtimeHours,
+    accumulatedOvertimeHours: roundHours(accumulatedOvertimeHours),
+  };
+}
+
+function validateWeeklyDayDraft(draft) {
+  if (draft.slot1CheckOut && !draft.slot1CheckIn) {
+    return "La salida 1 necesita una entrada 1.";
+  }
+
+  if (draft.slot2CheckIn && (!draft.slot1CheckIn || !draft.slot1CheckOut)) {
+    return "Completa el primer turno antes de registrar el segundo.";
+  }
+
+  if (draft.slot2CheckOut && !draft.slot2CheckIn) {
+    return "La salida 2 necesita una entrada 2.";
+  }
+
+  if (
+    draft.slot1CheckOut &&
+    draft.slot2CheckIn &&
+    calculateGapHours("2000-01-01", draft.slot1CheckOut, draft.slot2CheckIn) === 0
+  ) {
+    return "La segunda entrada debe ser despues de la primera salida.";
+  }
+
+  return "";
 }
 
 function getInitialTab() {
@@ -214,6 +354,8 @@ function App() {
     toInputDate(new Date())
   );
   const [selectedReportEmployeeId, setSelectedReportEmployeeId] = useState("all");
+  const [weeklyManualDraft, setWeeklyManualDraft] = useState({});
+  const [selectedWeeklyInfo, setSelectedWeeklyInfo] = useState(null);
   const [notice, setNotice] = useState(null);
   const [scanValue, setScanValue] = useState("");
   const [scanResult, setScanResult] = useState(null);
@@ -361,6 +503,42 @@ function App() {
     settings,
     selectedReportDate
   );
+  const weekDates = buildWeekDates(settings.weekStart);
+  const weeklyRecordsByCell = buildWeeklyRecordMap(records, settings.weekStart);
+  const weeklyHoursLimit = Number(
+    settings.standardHoursPerWeek ?? payroll.totals.weeklyHoursLimit ?? 48
+  );
+  const weeklyMatrixRows = collaborators.map((collaborator) => {
+    let accumulatedWorkedHours = 0;
+
+    return {
+      collaborator,
+      days: weekDates.map((date, index) => {
+        const key = getWeeklyCellKey(collaborator.id, date);
+        const existingRecords = weeklyRecordsByCell[key] || [];
+        const draft =
+          weeklyManualDraft[key] ?? createWeeklyDayDraft(existingRecords.slice(0, 2));
+        const stats = buildWeeklyDayStats(
+          date,
+          draft,
+          accumulatedWorkedHours,
+          weeklyHoursLimit
+        );
+
+        accumulatedWorkedHours = stats.accumulatedWorkedHours;
+
+        return {
+          key,
+          date,
+          dayName: dayNames[index],
+          draft,
+          stats,
+          visibleRecords: existingRecords.slice(0, 2),
+          hiddenRecordCount: Math.max(existingRecords.length - 2, 0),
+        };
+      }),
+    };
+  });
   const selectedReportCollaborator =
     selectedReportEmployeeId === "all"
       ? null
@@ -430,6 +608,11 @@ function App() {
   const selectedSlipDays = payroll.dailySummaries.filter(
     (day) => day.employeeId === selectedSlipSummary?.collaborator.id
   );
+  const selectedWeeklyInfoEntry = selectedWeeklyInfo
+    ? weeklyMatrixRows
+        .find((row) => row.collaborator.id === selectedWeeklyInfo.employeeId)
+        ?.days.find((day) => day.date === selectedWeeklyInfo.date) ?? null
+    : null;
   const clockTime = new Date(now).toLocaleTimeString("es-NI", {
     hour: "2-digit",
     minute: "2-digit",
@@ -476,6 +659,8 @@ function App() {
     };
 
     setSettings(nextSettings);
+    setWeeklyManualDraft({});
+    setSelectedWeeklyInfo(null);
     setManualForm((current) =>
       !current.date || !isDateInWeek(current.date, nextWeekStart)
         ? { ...current, date: nextWeekStart }
@@ -488,6 +673,76 @@ function App() {
       setSettings(previousSettings);
       showNotice("error", describeCloudSyncError(error));
     }
+  }
+
+  function handleWeeklyDraftChange(employeeId, date, field, value) {
+    const key = getWeeklyCellKey(employeeId, date);
+
+    setWeeklyManualDraft((current) => ({
+      ...current,
+      [key]: {
+        ...(current[key] ?? createWeeklyDayDraft(weeklyRecordsByCell[key] || [])),
+        [field]: value,
+      },
+    }));
+  }
+
+  async function handleSaveWeeklyDay(employeeId, date) {
+    if (!canSyncData) {
+      showNotice("error", syncState.error || "Firebase aun no esta listo.");
+      return;
+    }
+
+    const key = getWeeklyCellKey(employeeId, date);
+    const existingRecords = (weeklyRecordsByCell[key] || []).slice(0, 2);
+    const draft =
+      weeklyManualDraft[key] ?? createWeeklyDayDraft(existingRecords);
+    const validationError = validateWeeklyDayDraft(draft);
+
+    if (validationError) {
+      showNotice("error", validationError);
+      return;
+    }
+
+    const timestamp = new Date().toISOString();
+
+    try {
+      for (const [index, shiftField] of WEEKLY_SHIFT_FIELDS.entries()) {
+        const currentRecord = existingRecords[index];
+        const checkIn = draft[shiftField.checkIn];
+        const checkOut = draft[shiftField.checkOut];
+
+        if (!checkIn && !checkOut) {
+          if (currentRecord) {
+            await deleteRecordFromCloud(currentRecord.id);
+          }
+          continue;
+        }
+
+        await saveRecordToCloud({
+          id: currentRecord?.id ?? crypto.randomUUID(),
+          employeeId,
+          date,
+          checkIn,
+          checkOut,
+          breakMinutes: 0,
+          source: currentRecord?.source ?? "manual",
+          createdAt: currentRecord?.createdAt ?? timestamp,
+          updatedAt: timestamp,
+        });
+      }
+    } catch (error) {
+      showNotice("error", describeCloudSyncError(error));
+      return;
+    }
+
+    const collaboratorName =
+      collaborators.find((collaborator) => collaborator.id === employeeId)?.name ??
+      "Colaborador";
+    showNotice(
+      "success",
+      `${collaboratorName}: registro guardado para ${formatDateLabel(date)}.`
+    );
   }
 
   async function handleStandardHoursChange(rawValue) {
@@ -1441,10 +1696,148 @@ function App() {
 
           {selectedTab === "manual" ? (
             <>
+              <section className="panel panel-wide">
+                <div className="panel-heading">
+                  <div>
+                    <span className="panel-kicker">Registro semanal</span>
+                    <h2>Cuadro manual por colaborador</h2>
+                  </div>
+                  <span className="panel-meta">
+                    {formatDateLabel(settings.weekStart)} al{" "}
+                    {formatDateLabel(currentWeekEnd)}
+                  </span>
+                </div>
+
+                <p className="weekly-entry-copy">
+                  Registra hasta dos entradas y dos salidas por dia. Usa el
+                  cuadrito de informacion para ver horas trabajadas, almuerzo y
+                  el acumulado semanal hasta ese dia.
+                </p>
+
+                <div className="table-wrap weekly-entry-wrap">
+                  <table className="weekly-entry-table">
+                    <thead>
+                      <tr>
+                        <th>Colaboradores</th>
+                        {weekDates.map((date, index) => (
+                          <th key={date}>
+                            <div className="weekly-entry-head">
+                              <strong>{formatDayHeader(dayNames[index])}</strong>
+                              <span>{formatDateLabel(date)}</span>
+                            </div>
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {weeklyMatrixRows.map((row) => (
+                        <tr key={row.collaborator.id}>
+                          <td className="weekly-collaborator-cell">
+                            <strong>{row.collaborator.name}</strong>
+                            <span className="cell-meta">
+                              {row.collaborator.documentId}
+                            </span>
+                          </td>
+                          {row.days.map((day) => (
+                            <td key={day.key}>
+                              <div className="weekly-entry-cell">
+                                <div className="weekly-entry-inputs">
+                                  {WEEKLY_SHIFT_FIELDS.map((shiftField, index) => (
+                                    <div
+                                      key={`${day.key}-${shiftField.label}`}
+                                      className="weekly-shift-pair"
+                                    >
+                                      <label>
+                                        <span>E{index + 1}</span>
+                                        <input
+                                          type="time"
+                                          value={day.draft[shiftField.checkIn]}
+                                          disabled={!canSyncData}
+                                          onChange={(event) =>
+                                            handleWeeklyDraftChange(
+                                              row.collaborator.id,
+                                              day.date,
+                                              shiftField.checkIn,
+                                              event.target.value
+                                            )
+                                          }
+                                        />
+                                      </label>
+                                      <label>
+                                        <span>S{index + 1}</span>
+                                        <input
+                                          type="time"
+                                          value={day.draft[shiftField.checkOut]}
+                                          disabled={!canSyncData}
+                                          onChange={(event) =>
+                                            handleWeeklyDraftChange(
+                                              row.collaborator.id,
+                                              day.date,
+                                              shiftField.checkOut,
+                                              event.target.value
+                                            )
+                                          }
+                                        />
+                                      </label>
+                                    </div>
+                                  ))}
+                                </div>
+
+                                <div className="weekly-entry-meta">
+                                  <strong>{formatCompactHours(day.stats.workedHours)} h</strong>
+                                  <span>
+                                    Almuerzo {formatCompactHours(day.stats.lunchHours)} h
+                                  </span>
+                                  {day.hiddenRecordCount > 0 ? (
+                                    <span>
+                                      +{day.hiddenRecordCount} tramo(s) adicional(es)
+                                    </span>
+                                  ) : null}
+                                </div>
+
+                                <div className="weekly-entry-actions">
+                                  <button
+                                    type="button"
+                                    className="mini-button weekly-info-button"
+                                    aria-label="Ver resumen del dia"
+                                    title="Ver resumen del dia"
+                                    onClick={() =>
+                                      setSelectedWeeklyInfo({
+                                        employeeId: row.collaborator.id,
+                                        date: day.date,
+                                      })
+                                    }
+                                  >
+                                    i
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="mini-button"
+                                    disabled={!canSyncData}
+                                    onClick={() =>
+                                      handleSaveWeeklyDay(
+                                        row.collaborator.id,
+                                        day.date
+                                      )
+                                    }
+                                  >
+                                    Guardar
+                                  </button>
+                                </div>
+                              </div>
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+
               <section className="panel">
                 <div className="panel-heading">
                   <div>
-                    <span className="panel-kicker">Entrada manual</span>
+                    <span className="panel-kicker">Ajuste individual</span>
                     <h2>
                       {editingRecordId ? "Editar registro" : "Agregar registro"}
                     </h2>
@@ -1928,6 +2321,109 @@ function App() {
             </>
           ) : null}
         </main>
+      ) : null}
+
+      {selectedWeeklyInfoEntry ? (
+        <div
+          className="weekly-modal-backdrop"
+          role="presentation"
+          onClick={() => setSelectedWeeklyInfo(null)}
+        >
+          <section
+            className="weekly-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="weekly-info-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="panel-heading">
+              <div>
+                <span className="panel-kicker">Resumen del dia</span>
+                <h2 id="weekly-info-title">
+                  {
+                    collaborators.find(
+                      (collaborator) =>
+                        collaborator.id === selectedWeeklyInfo.employeeId
+                    )?.name
+                  }
+                </h2>
+              </div>
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={() => setSelectedWeeklyInfo(null)}
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <div className="weekly-modal-copy">
+              <strong>
+                {formatDateLabel(selectedWeeklyInfoEntry.date)} |{" "}
+                {formatDayHeader(selectedWeeklyInfoEntry.dayName)}
+              </strong>
+              <span>
+                Semana del {formatDateLabel(settings.weekStart)} al{" "}
+                {formatDateLabel(currentWeekEnd)}
+              </span>
+            </div>
+
+            <div className="slip-summary slip-summary-compact weekly-modal-stats">
+              <StatCard
+                label="Horas trabajadas"
+                value={formatHours(selectedWeeklyInfoEntry.stats.workedHours)}
+                caption="Suma de los dos tramos del dia"
+              />
+              <StatCard
+                label="Almuerzo"
+                value={formatHours(selectedWeeklyInfoEntry.stats.lunchHours)}
+                caption="Tiempo entre salida y regreso"
+              />
+              <StatCard
+                label="Acumulado"
+                value={formatHours(
+                  selectedWeeklyInfoEntry.stats.accumulatedWorkedHours
+                )}
+                caption="Horas trabajadas acumuladas hasta este dia"
+              />
+              <StatCard
+                label="Extra acumulada"
+                value={formatHours(
+                  selectedWeeklyInfoEntry.stats.accumulatedOvertimeHours
+                )}
+                caption="Horas extra ya activadas en la semana"
+              />
+            </div>
+
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Tramo</th>
+                    <th>Entrada</th>
+                    <th>Salida</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {WEEKLY_SHIFT_FIELDS.map((shiftField) => (
+                    <tr key={`${selectedWeeklyInfoEntry.key}-${shiftField.label}`}>
+                      <td>{shiftField.label}</td>
+                      <td>{selectedWeeklyInfoEntry.draft[shiftField.checkIn] || "--"}</td>
+                      <td>{selectedWeeklyInfoEntry.draft[shiftField.checkOut] || "--"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {selectedWeeklyInfoEntry.hiddenRecordCount > 0 ? (
+              <p className="empty-state">
+                Hay {selectedWeeklyInfoEntry.hiddenRecordCount} tramo(s)
+                adicional(es) guardado(s) ese dia fuera de este cuadro.
+              </p>
+            ) : null}
+          </section>
+        </div>
       ) : null}
     </div>
   );
