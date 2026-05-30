@@ -2,8 +2,8 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { BrowserMultiFormatReader } from "@zxing/browser";
 import { BarcodeFormat, DecodeHintType, NotFoundException } from "@zxing/library";
 import {
-  collaboratorByDocumentId,
   collaborators,
+  getCollaboratorByClockCode,
   normalizeDocumentId,
 } from "./data/collaborators";
 import {
@@ -72,7 +72,7 @@ const APP_USERS = {
     username: "marcar",
     password: "marcar",
     label: "Terminal de marcacion",
-    subtitle: "Acceso exclusivo para entrada y salida por cedula.",
+    subtitle: "Acceso exclusivo para entrada y salida por cedula o ultimos 5.",
     allowedTabs: ["marcacion"],
   },
 };
@@ -890,18 +890,19 @@ function App() {
       setScanResult({
         type: "error",
         title: "Escaneo vacio",
-        detail: "Escanea o escribe una cedula para registrar la marcacion.",
+        detail:
+          "Escanea la cedula o escribe la cedula completa o sus ultimos 5 caracteres.",
       });
       setScanValue("");
       return false;
     }
 
-    const collaborator = collaboratorByDocumentId[normalizedDocument];
+    const collaborator = getCollaboratorByClockCode(normalizedDocument);
     if (!collaborator) {
       setScanResult({
         type: "error",
         title: "Cedula no encontrada",
-        detail: `La cedula ${String(rawValue).trim()} no esta registrada en el sistema.`,
+        detail: `La cedula o terminacion ${String(rawValue).trim()} no esta registrada en el sistema.`,
       });
       setScanValue("");
       return false;
@@ -1291,7 +1292,7 @@ function App() {
 
               <div className="hero-tags">
                 <span>Base de calculo cargada</span>
-                <span>Marcacion por cedula</span>
+                <span>Marcacion por cedula o ultimos 5</span>
                 <span>Exportacion a Excel</span>
               </div>
             </div>
@@ -1466,7 +1467,7 @@ function App() {
 
                 <form className="scanner-form scanner-form-compact" onSubmit={handleClockScan}>
                   <label className="scanner-label" htmlFor="document-scan">
-                    Cedula
+                    Cedula o ultimos 5
                   </label>
                   <div className="scanner-input-shell">
                     <span className="scanner-corner scanner-corner-top-left" aria-hidden="true" />
@@ -1483,7 +1484,7 @@ function App() {
                       autoCapitalize="characters"
                       enterKeyHint="go"
                       inputMode="text"
-                      placeholder="ESCRIBE TU CEDULA"
+                      placeholder="CEDULA O ULTIMOS 5"
                       value={scanValue}
                       disabled={!canSyncData}
                       onChange={(event) =>

@@ -87,6 +87,17 @@ export function normalizeDocumentId(value) {
     .replace(/[^0-9A-Z]/g, "");
 }
 
+export const SHORT_DOCUMENT_ID_LENGTH = 5;
+
+export function getShortDocumentId(value) {
+  const normalized = normalizeDocumentId(value);
+  if (!normalized) {
+    return "";
+  }
+
+  return normalized.slice(-SHORT_DOCUMENT_ID_LENGTH);
+}
+
 export const collaborators = rawCollaborators.map((collaborator, index) => ({
   ...collaborator,
   id: `collaborator-${index + 1}`,
@@ -103,3 +114,31 @@ export const collaboratorByDocumentId = Object.fromEntries(
     collaborator,
   ])
 );
+
+export const collaboratorByShortDocumentId = collaborators.reduce(
+  (collection, collaborator) => {
+    const shortDocumentId = getShortDocumentId(collaborator.normalizedDocumentId);
+
+    if (!shortDocumentId) {
+      return collection;
+    }
+
+    collection[shortDocumentId] = collection[shortDocumentId] ? null : collaborator;
+    return collection;
+  },
+  {}
+);
+
+export function getCollaboratorByClockCode(value) {
+  const normalized = normalizeDocumentId(value);
+  if (!normalized) {
+    return null;
+  }
+
+  return (
+    collaboratorByDocumentId[normalized] ??
+    (normalized.length === SHORT_DOCUMENT_ID_LENGTH
+      ? collaboratorByShortDocumentId[normalized] ?? null
+      : null)
+  );
+}
