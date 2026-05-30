@@ -209,6 +209,28 @@ function validateWeeklyDayDraft(draft) {
   return "";
 }
 
+function buildOpenRecordMap(records, targetDate) {
+  return records.reduce((collection, record) => {
+    if (record.checkOut || (targetDate && record.date !== targetDate)) {
+      return collection;
+    }
+
+    const current = collection[record.employeeId];
+    const currentTime = current
+      ? new Date(`${current.date}T${current.checkIn || "00:00"}:00`).getTime()
+      : -Infinity;
+    const nextTime = new Date(
+      `${record.date}T${record.checkIn || "00:00"}:00`
+    ).getTime();
+
+    if (!current || nextTime >= currentTime) {
+      collection[record.employeeId] = record;
+    }
+
+    return collection;
+  }, {});
+}
+
 function getInitialTab() {
   const availableTabs = new Set(tabs.map((tab) => tab.id));
   const hash = window.location.hash.replace("#", "").trim().toLowerCase();
@@ -580,24 +602,8 @@ function App() {
   const visibleSummaryRows = payroll.summaryRows.filter(
     (row) => row.recordCount > 0 || row.overtimeHours > 0
   );
-  const activeRecords = records.reduce((collection, record) => {
-    if (!record.checkOut) {
-      const current = collection[record.employeeId];
-      const currentTime = current
-        ? new Date(
-            `${current.date}T${current.checkIn || "00:00"}:00`
-          ).getTime()
-        : -Infinity;
-      const nextTime = new Date(
-        `${record.date}T${record.checkIn || "00:00"}:00`
-      ).getTime();
-
-      if (!current || nextTime >= currentTime) {
-        collection[record.employeeId] = record;
-      }
-    }
-    return collection;
-  }, {});
+  const currentClockDate = toInputDate(now);
+  const activeRecords = buildOpenRecordMap(records, currentClockDate);
   const topWorkers = [...payroll.summaryRows]
     .sort((left, right) => right.totalPay - left.totalPay)
     .slice(0, 5);
@@ -908,10 +914,10 @@ function App() {
       return false;
     }
 
-    const activeRecord = activeRecords[collaborator.id];
     const timestamp = new Date();
     const nextDate = toInputDate(timestamp);
     const nextTime = toInputTime(timestamp);
+    const activeRecord = buildOpenRecordMap(records, nextDate)[collaborator.id];
     const movement = activeRecord ? "Salida" : "Entrada";
 
     try {
@@ -1329,7 +1335,7 @@ function App() {
                 <StatCard
                   label="Marcaciones abiertas"
                   value={String(Object.keys(activeRecords).length)}
-                  caption="Entradas pendientes de salida"
+                  caption="Entradas pendientes de salida solo de hoy"
                 />
               </div>
             </aside>
