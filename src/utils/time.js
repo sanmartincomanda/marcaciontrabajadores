@@ -122,6 +122,27 @@ export function calculateWorkedHours(record) {
   return Math.max(diffHours - breakMinutes / 60, 0);
 }
 
+export function roundWorkedHours(value) {
+  const numericValue = Number(value || 0);
+  if (!Number.isFinite(numericValue) || numericValue <= 0) {
+    return 0;
+  }
+
+  const normalizedValue = Number(numericValue.toFixed(4));
+  const wholeHours = Math.floor(normalizedValue);
+  const decimalHours = Number((normalizedValue - wholeHours).toFixed(4));
+
+  if (decimalHours <= 0.25) {
+    return wholeHours;
+  }
+
+  if (decimalHours <= 0.75) {
+    return wholeHours + 0.5;
+  }
+
+  return wholeHours + 1;
+}
+
 export function sumNumbers(values) {
   return values.reduce((total, value) => total + Number(value || 0), 0);
 }

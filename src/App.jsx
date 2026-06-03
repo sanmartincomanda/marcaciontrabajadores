@@ -36,6 +36,7 @@ import {
   getMonday,
   getWeekEnd,
   isDateInWeek,
+  roundWorkedHours,
   toInputDate,
   toInputTime,
 } from "./utils/time";
@@ -160,11 +161,13 @@ function buildWeeklyDayStats(date, draft, accumulatedBefore, weeklyLimit) {
     checkOut: draft.slot2CheckOut,
     breakMinutes: 0,
   });
-  const workedHours = roundHours(firstShiftHours + secondShiftHours);
   const lunchHours = calculateGapHours(
     date,
     draft.slot1CheckOut,
     draft.slot2CheckIn
+  );
+  const workedHours = roundHours(
+    roundWorkedHours(firstShiftHours + secondShiftHours)
   );
   const accumulatedWorkedHours = roundHours(accumulatedBefore + workedHours);
   const previousAccumulatedOvertime = Math.max(accumulatedBefore - weeklyLimit, 0);
@@ -589,12 +592,16 @@ function App() {
         (total, row) => total + row.totalWorkedHours,
         0
       ),
+      ordinaryHours: filteredDailySummaryRows.reduce(
+        (total, row) => total + row.weeklyOrdinaryHours,
+        0
+      ),
       overtimeHours: filteredDailySummaryRows.reduce(
-        (total, row) => total + row.overtimeHours,
+        (total, row) => total + row.weeklyOvertimeHours,
         0
       ),
       totalPay: filteredDailySummaryRows.reduce(
-        (total, row) => total + row.overtimePay,
+        (total, row) => total + row.weeklyOvertimePay,
         0
       ),
     },
@@ -1592,12 +1599,12 @@ function App() {
                       <tr>
                         <th>Colaborador</th>
                         <th>Cedula</th>
-                        <th>Hora ordinaria</th>
-                        <th>Hora extra</th>
                         <th>Dias con registro</th>
-                        <th>Horas trabajadas</th>
+                        <th>Total horas semana</th>
+                        <th>Horas ordinarias</th>
                         <th>Horas extra</th>
-                        <th>Total a pagar</th>
+                        <th>Valor hora extra</th>
+                        <th>Pago horas extra</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1605,11 +1612,11 @@ function App() {
                         <tr key={row.collaborator.id}>
                           <td>{row.collaborator.name}</td>
                           <td>{row.collaborator.documentId}</td>
-                          <td>{formatCurrency(row.ordinaryRate)}</td>
-                          <td>{formatCurrency(row.overtimeRate)}</td>
                           <td>{row.dayCount}</td>
                           <td>{formatHours(row.totalWorkedHours)}</td>
+                          <td>{formatHours(row.ordinaryHours)}</td>
                           <td>{formatHours(row.overtimeHours)}</td>
+                          <td>{formatCurrency(row.overtimeRate)}</td>
                           <td>{formatCurrency(row.totalPay)}</td>
                         </tr>
                       ))}
@@ -1691,6 +1698,10 @@ function App() {
                   <div className="metric-line">
                     <span>Horas trabajadas</span>
                     <strong>{formatHours(payroll.totals.workedHours)}</strong>
+                  </div>
+                  <div className="metric-line">
+                    <span>Horas ordinarias</span>
+                    <strong>{formatHours(payroll.totals.ordinaryHours)}</strong>
                   </div>
                   <div className="metric-line">
                     <span>Colaboradores con actividad</span>
@@ -1996,8 +2007,8 @@ function App() {
                         <th>Entrada</th>
                         <th>Salida</th>
                         <th>Descanso</th>
-                        <th>Horas trabajadas</th>
-                        <th>Horas extra</th>
+                        <th>Horas del tramo</th>
+                        <th>Horas del dia</th>
                         <th>Fuente</th>
                         <th>Acciones</th>
                       </tr>
@@ -2015,7 +2026,7 @@ function App() {
                           <td>{record.checkOut || "Pendiente"}</td>
                           <td>{Number(record.breakMinutes || 0)} min</td>
                           <td>{formatHours(record.workedHours)}</td>
-                          <td>{formatHours(record.overtimeHours)}</td>
+                          <td>{formatHours(record.dayWorkedHours)}</td>
                           <td>{record.source === "clock" ? "Marcacion" : "Manual"}</td>
                           <td>
                             <div className="mini-actions">
@@ -2171,8 +2182,11 @@ function App() {
                         <th>Cedula</th>
                         <th>Tramos</th>
                         <th>Horario(s) del dia</th>
-                        <th>Horas trabajadas</th>
-                        <th>Horas extra</th>
+                        <th>Horas del dia</th>
+                        <th>Total semana</th>
+                        <th>Horas ordinarias semana</th>
+                        <th>Horas extra semana</th>
+                        <th>Pago horas extra</th>
                         <th>Estado</th>
                       </tr>
                     </thead>
@@ -2184,13 +2198,16 @@ function App() {
                           <td>{row.recordCount}</td>
                           <td>{row.scheduleLabel}</td>
                           <td>{formatHours(row.totalWorkedHours)}</td>
-                          <td>{formatHours(row.overtimeHours)}</td>
+                          <td>{formatHours(row.weeklyTotalWorkedHours)}</td>
+                          <td>{formatHours(row.weeklyOrdinaryHours)}</td>
+                          <td>{formatHours(row.weeklyOvertimeHours)}</td>
+                          <td>{formatCurrency(row.weeklyOvertimePay)}</td>
                           <td>{row.statusLabel}</td>
                         </tr>
                       ))}
                       {dailyReportSnapshot.summaryRows.length === 0 ? (
                         <tr>
-                          <td colSpan="7">
+                          <td colSpan="10">
                             <span className="empty-state">
                               No hay marcaciones registradas para esta fecha.
                             </span>
@@ -2219,8 +2236,9 @@ function App() {
                         <th>Entrada</th>
                         <th>Salida</th>
                         <th>Descanso</th>
-                        <th>Horas trabajadas</th>
-                        <th>Horas extra</th>
+                        <th>Horas del tramo</th>
+                        <th>Horas del dia</th>
+                        <th>Total semana</th>
                         <th>Fuente</th>
                         <th>Estado</th>
                       </tr>
@@ -2234,14 +2252,15 @@ function App() {
                           <td>{record.checkOut || "Pendiente"}</td>
                           <td>{Number(record.breakMinutes || 0)} min</td>
                           <td>{formatHours(record.workedHours)}</td>
-                          <td>{formatHours(record.overtimeHours)}</td>
+                          <td>{formatHours(record.dayWorkedHours)}</td>
+                          <td>{formatHours(record.weeklyTotalWorkedHours)}</td>
                           <td>{record.source === "clock" ? "Marcacion" : "Manual"}</td>
                           <td>{record.checkOut ? "Completo" : "Entrada abierta"}</td>
                         </tr>
                       ))}
                       {dailyReportSnapshot.processedRecords.length === 0 ? (
                         <tr>
-                          <td colSpan="9">
+                          <td colSpan="10">
                             <span className="empty-state">
                               Aun no hay entradas ni salidas para la fecha seleccionada.
                             </span>
@@ -2265,14 +2284,19 @@ function App() {
                   <>
                     <div className="slip-summary slip-summary-compact">
                       <StatCard
-                        label="Cedula"
-                        value={selectedSlipSummary.collaborator.documentId}
-                        caption="Identificador usado en la terminal de marcacion"
+                        label="Total semana"
+                        value={formatHours(selectedSlipSummary.totalWorkedHours)}
+                        caption="Horas reportadas con redondeo diario aplicado"
+                      />
+                      <StatCard
+                        label="Horas ordinarias"
+                        value={formatHours(selectedSlipSummary.ordinaryHours)}
+                        caption="Hasta 48 horas semanales"
                       />
                       <StatCard
                         label="Hora extra"
                         value={formatCurrency(selectedSlipSummary.overtimeRate)}
-                        caption="Se recalcula segun la configuracion semanal"
+                        caption={selectedSlipSummary.collaborator.documentId}
                       />
                       <StatCard
                         label="Horas extra"
@@ -2294,8 +2318,6 @@ function App() {
                             <th>Dia</th>
                             <th>Horario(s)</th>
                             <th>Horas trabajadas</th>
-                            <th>Horas extra</th>
-                            <th>Pago</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -2305,15 +2327,13 @@ function App() {
                               <td>{day.dayLabel}</td>
                               <td>{day.scheduleLabel}</td>
                               <td>{formatHours(day.totalWorkedHours)}</td>
-                              <td>{formatHours(day.overtimeHours)}</td>
-                              <td>{formatCurrency(day.overtimePay)}</td>
                             </tr>
                           ))}
                           {selectedSlipDays.length === 0 ? (
                             <tr>
-                              <td colSpan="6">
+                              <td colSpan="4">
                                 <span className="empty-state">
-                                  Este colaborador no tiene horas extras registradas en la
+                                  Este colaborador no tiene jornadas registradas en la
                                   semana seleccionada.
                                 </span>
                               </td>

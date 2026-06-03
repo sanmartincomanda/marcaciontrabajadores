@@ -20,26 +20,29 @@ function buildConsolidatedRows(snapshot) {
     [
       "Colaborador",
       "Cedula",
-      "Valor hora extra",
-      "Horas trabajadas",
+      "Total horas trabajadas semana",
+      "Horas ordinarias",
       "Horas extra",
-      "Total a pagar",
+      "Valor hora extra",
+      "Pago horas extras",
     ],
     ...summaryRows.map((row) => [
       row.collaborator.name,
       row.collaborator.documentId,
-      row.overtimeRate,
       row.totalWorkedHours,
+      row.ordinaryHours,
       row.overtimeHours,
+      row.overtimeRate,
       row.totalPay,
     ]),
     [],
     [
       "Totales",
       "",
-      "",
       snapshot.totals.workedHours,
+      snapshot.totals.ordinaryHours,
       snapshot.totals.overtimeHours,
+      "",
       snapshot.totals.totalPay,
     ],
   ];
@@ -58,8 +61,8 @@ function buildRawRows(snapshot) {
       "Entrada",
       "Salida",
       "Descanso (min)",
-      "Horas trabajadas",
-      "Horas extra",
+      "Horas del tramo",
+      "Horas del dia",
       "Fuente",
       "Estado",
     ],
@@ -71,7 +74,7 @@ function buildRawRows(snapshot) {
       record.checkOut || "",
       Number(record.breakMinutes || 0),
       record.workedHours,
-      record.overtimeHours,
+      record.dayWorkedHours,
       record.source === "clock" ? "Marcacion" : "Manual",
       record.checkOut ? "Completo" : "Pendiente",
     ]),
@@ -87,19 +90,21 @@ function buildSlipRows(snapshot, summaryRow, collaboratorDays) {
     ["Cedula", summaryRow.collaborator.documentId],
     ["Semana del", formatDateLabel(snapshot.weekStart)],
     ["Semana al", formatDateLabel(snapshot.weekEnd)],
+    ["Total horas trabajadas semana", summaryRow.totalWorkedHours],
+    ["Horas ordinarias", summaryRow.ordinaryHours],
+    ["Horas extras", summaryRow.overtimeHours],
     ["Valor hora extra", summaryRow.overtimeRate],
+    ["Pago horas extras", summaryRow.totalPay],
     [],
-    ["Fecha", "Dia", "Horario(s)", "Horas trabajadas", "Horas extra", "Pago"],
+    ["Fecha", "Dia", "Horario(s)", "Horas trabajadas"],
     ...collaboratorDays.map((day) => [
       formatDateLabel(day.date),
       day.dayLabel,
       day.scheduleLabel,
       day.totalWorkedHours,
-      day.overtimeHours,
-      day.overtimePay,
     ]),
     [],
-    ["Totales", "", "", summaryRow.totalWorkedHours, summaryRow.overtimeHours, summaryRow.totalPay],
+    ["Totales", "", "", summaryRow.totalWorkedHours],
   ];
 }
 
@@ -115,9 +120,11 @@ function buildDailyMarkingSummaryRows(snapshot) {
       "Cedula",
       "Tramos",
       "Horario(s) del dia",
-      "Horas trabajadas",
-      "Horas extra",
-      "Total estimado",
+      "Horas del dia",
+      "Total semana",
+      "Horas ordinarias semana",
+      "Horas extra semana",
+      "Pago horas extra",
       "Estado",
     ],
     ...snapshot.summaryRows.map((row) => [
@@ -126,8 +133,10 @@ function buildDailyMarkingSummaryRows(snapshot) {
       row.recordCount,
       row.scheduleLabel,
       row.totalWorkedHours,
-      row.overtimeHours,
-      row.overtimePay,
+      row.weeklyTotalWorkedHours,
+      row.weeklyOrdinaryHours,
+      row.weeklyOvertimeHours,
+      row.weeklyOvertimePay,
       row.statusLabel,
     ]),
     [],
@@ -137,6 +146,8 @@ function buildDailyMarkingSummaryRows(snapshot) {
       snapshot.totals.recordCount,
       "",
       snapshot.totals.workedHours,
+      "",
+      snapshot.totals.ordinaryHours,
       snapshot.totals.overtimeHours,
       snapshot.totals.totalPay,
       `${snapshot.totals.openCount} abierto(s)`,
@@ -156,8 +167,9 @@ function buildDailyMarkingRawRows(snapshot) {
       "Entrada",
       "Salida",
       "Descanso (min)",
-      "Horas trabajadas",
-      "Horas extra",
+      "Horas del tramo",
+      "Horas del dia",
+      "Total semana",
       "Fuente",
       "Estado",
     ],
@@ -168,7 +180,8 @@ function buildDailyMarkingRawRows(snapshot) {
       record.checkOut || "",
       Number(record.breakMinutes || 0),
       record.workedHours,
-      record.overtimeHours,
+      record.dayWorkedHours,
+      record.weeklyTotalWorkedHours,
       record.source === "clock" ? "Marcacion" : "Manual",
       record.checkOut ? "Completo" : "Entrada abierta",
     ]),
@@ -180,13 +193,13 @@ export function exportConsolidatedWorkbook(snapshot) {
 
   XLSX.utils.book_append_sheet(
     workbook,
-    buildSheet(buildConsolidatedRows(snapshot), [34, 16, 18, 18, 16, 14, 16]),
+    buildSheet(buildConsolidatedRows(snapshot), [34, 16, 20, 18, 16, 18, 18]),
     "Consolidado"
   );
 
   XLSX.utils.book_append_sheet(
     workbook,
-    buildSheet(buildRawRows(snapshot), [14, 14, 34, 12, 12, 14, 16, 14, 12, 14]),
+    buildSheet(buildRawRows(snapshot), [14, 14, 34, 12, 12, 14, 16, 16, 12, 14]),
     "Registros"
   );
 
@@ -201,13 +214,13 @@ export function exportDailyMarkingWorkbook(snapshot) {
 
   XLSX.utils.book_append_sheet(
     workbook,
-    buildSheet(buildDailyMarkingSummaryRows(snapshot), [34, 16, 10, 34, 18, 14, 16, 18]),
+    buildSheet(buildDailyMarkingSummaryRows(snapshot), [34, 16, 10, 34, 16, 16, 18, 16, 18, 18]),
     "Resumen dia"
   );
 
   XLSX.utils.book_append_sheet(
     workbook,
-    buildSheet(buildDailyMarkingRawRows(snapshot), [34, 16, 12, 12, 14, 16, 14, 12, 16]),
+    buildSheet(buildDailyMarkingRawRows(snapshot), [34, 16, 12, 12, 14, 16, 16, 16, 12, 16]),
     "Marcaciones dia"
   );
 
@@ -230,7 +243,7 @@ export function exportIndividualSlipWorkbook(snapshot, employeeId) {
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(
     workbook,
-    buildSheet(buildSlipRows(snapshot, summaryRow, collaboratorDays), [18, 38, 34, 16, 14, 14]),
+    buildSheet(buildSlipRows(snapshot, summaryRow, collaboratorDays), [18, 38, 34, 16]),
     "Colilla"
   );
 
@@ -253,7 +266,7 @@ export function exportAllSlipsWorkbook(snapshot) {
     const sheetName = summaryRow.collaborator.name.slice(0, 31);
     XLSX.utils.book_append_sheet(
       workbook,
-      buildSheet(buildSlipRows(snapshot, summaryRow, collaboratorDays), [18, 38, 34, 16, 14, 14]),
+      buildSheet(buildSlipRows(snapshot, summaryRow, collaboratorDays), [18, 38, 34, 16]),
       sheetName
     );
   }

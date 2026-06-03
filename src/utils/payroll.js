@@ -5,6 +5,7 @@ import {
   getMonday,
   getWeekEnd,
   isDateInWeek,
+  roundWorkedHours,
   sumNumbers,
 } from "./time";
 
@@ -54,20 +55,6 @@ function sortProcessedRecords(left, right) {
   return (left.createdAt || "").localeCompare(right.createdAt || "");
 }
 
-function sortChronologicalRecords(left, right) {
-  const dateDiff = left.date.localeCompare(right.date);
-  if (dateDiff !== 0) {
-    return dateDiff;
-  }
-
-  const checkInDiff = (left.checkIn || "").localeCompare(right.checkIn || "");
-  if (checkInDiff !== 0) {
-    return checkInDiff;
-  }
-
-  return (left.createdAt || "").localeCompare(right.createdAt || "");
-}
-
 function getWeeklyHoursLimit(settings) {
   if (settings.standardHoursPerWeek != null) {
     return Number(settings.standardHoursPerWeek);
@@ -106,45 +93,6 @@ function enrichRecords(collaborators, records, settings) {
     .sort(sortProcessedRecords);
 }
 
-function applyWeeklyOvertime(processedRecords, settings) {
-  const recordsByEmployee = new Map();
-  const weeklyHoursLimit = Math.max(getWeeklyHoursLimit(settings), 0);
-
-  for (const record of processedRecords) {
-    const employeeRecords = recordsByEmployee.get(record.employeeId) ?? [];
-    employeeRecords.push(record);
-    recordsByEmployee.set(record.employeeId, employeeRecords);
-  }
-
-  const allocatedRecords = [];
-
-  for (const employeeRecords of recordsByEmployee.values()) {
-    const orderedRecords = [...employeeRecords].sort(sortChronologicalRecords);
-    let accumulatedWorkedHours = 0;
-
-    for (const record of orderedRecords) {
-      const availableOrdinaryHours = Math.max(
-        weeklyHoursLimit - accumulatedWorkedHours,
-        0
-      );
-      const ordinaryHours = Math.min(record.workedHours, availableOrdinaryHours);
-      const overtimeHours = Math.max(record.workedHours - ordinaryHours, 0);
-
-      accumulatedWorkedHours += record.workedHours;
-
-      allocatedRecords.push({
-        ...record,
-        ordinaryHours: round(ordinaryHours),
-        overtimeHours: round(overtimeHours),
-        overtimePay: round(overtimeHours * record.overtimeRate),
-        accumulatedWorkedHours: round(accumulatedWorkedHours),
-      });
-    }
-  }
-
-  return allocatedRecords.sort(sortProcessedRecords);
-}
-
 function buildDailySummaries(processedRecords) {
   const dailyMap = new Map();
 
@@ -160,20 +108,14 @@ function buildDailySummaries(processedRecords) {
         ordinaryRate: record.ordinaryRate,
         overtimeRate: record.overtimeRate,
         records: [],
-        totalWorkedHours: 0,
-        ordinaryHours: 0,
-        overtimeHours: 0,
-        overtimePay: 0,
+        totalWorkedHoursRaw: 0,
         totalBreakMinutes: 0,
         lastMovementAt: "",
         lastMovementType: "",
       };
 
     current.records.push(record);
-    current.totalWorkedHours += record.workedHours;
-    current.ordinaryHours += Number(record.ordinaryHours || 0);
-    current.overtimeHours += Number(record.overtimeHours || 0);
-    current.overtimePay += Number(record.overtimePay || 0);
+    current.totalWorkedHoursRaw += Number(record.workedHours || 0);
     current.totalBreakMinutes += Number(record.breakMinutes || 0);
 
     const lastMovementAt = record.checkOut
@@ -190,8 +132,8 @@ function buildDailySummaries(processedRecords) {
 
   return Array.from(dailyMap.values())
     .map((entry) => {
-      const records = [...entry.records].sort((left, right) =>
-        getRecordSortTime(left) - getRecordSortTime(right)
+      const records = [...entry.records].sort(
+        (left, right) => getRecordSortTime(left) - getRecordSortTime(right)
       );
       const openRecordCount = records.filter((record) => !record.checkOut).length;
       const completedRecordCount = records.length - openRecordCount;
@@ -205,6 +147,9 @@ function buildDailySummaries(processedRecords) {
         statusLabel = "Varios tramos";
       }
 
+      const totalWorkedHoursRaw = round(entry.totalWorkedHoursRaw);
+      const totalWorkedHours = round(roundWorkedHours(totalWorkedHoursRaw));
+
       return {
         ...entry,
         records,
@@ -212,10 +157,8 @@ function buildDailySummaries(processedRecords) {
         openRecordCount,
         completedRecordCount,
         statusLabel,
-        totalWorkedHours: round(entry.totalWorkedHours),
-        ordinaryHours: round(entry.ordinaryHours),
-        overtimeHours: round(entry.overtimeHours),
-        overtimePay: round(entry.overtimePay),
+        totalWorkedHoursRaw,
+        totalWorkedHours,
         scheduleLabel: records
           .map((record) =>
             record.checkOut
@@ -230,46 +173,35 @@ function buildDailySummaries(processedRecords) {
       if (dateDiff !== 0) {
         return dateDiff;
       }
+
       return left.collaborator.name.localeCompare(right.collaborator.name);
     });
 }
 
-export function buildPayrollSnapshot(collaborators, records, settings) {
-  const processedRecords = enrichRecords(collaborators, records, settings);
-  const weekRecords = applyWeeklyOvertime(
-    processedRecords.filter((record) =>
-      isDateInWeek(record.date, settings.weekStart)
-    ),
-    settings
-  );
-  const dailySummaries = buildDailySummaries(weekRecords);
+function buildWeeklySummaryRows(collaborators, dailySummaries, settings) {
+  const weeklyHoursLimit = Math.max(getWeeklyHoursLimit(settings), 0);
 
-  const summaryRows = collaborators.map((collaborator) => {
+  return collaborators.map((collaborator) => {
     const employeeDays = dailySummaries.filter(
       (summary) => summary.employeeId === collaborator.id
     );
-
-    const totalWorkedHours = sumNumbers(
-      employeeDays.map((summary) => summary.totalWorkedHours)
+    const totalWorkedHours = round(
+      sumNumbers(employeeDays.map((summary) => summary.totalWorkedHours))
     );
-    const ordinaryHours = sumNumbers(
-      employeeDays.map((summary) => summary.ordinaryHours)
-    );
-    const overtimeHours = sumNumbers(
-      employeeDays.map((summary) => summary.overtimeHours)
-    );
-    const totalPay = sumNumbers(employeeDays.map((summary) => summary.overtimePay));
+    const ordinaryHours = round(Math.min(totalWorkedHours, weeklyHoursLimit));
+    const overtimeHours = round(Math.max(totalWorkedHours - weeklyHoursLimit, 0));
     const { ordinaryRate, overtimeRate } = buildRates(collaborator, settings);
+    const totalPay = round(overtimeHours * overtimeRate);
 
     return {
       collaborator,
       salary: round(collaborator.salary),
       ordinaryRate,
       overtimeRate,
-      totalWorkedHours: round(totalWorkedHours),
-      ordinaryHours: round(ordinaryHours),
-      overtimeHours: round(overtimeHours),
-      totalPay: round(totalPay),
+      totalWorkedHours,
+      ordinaryHours,
+      overtimeHours,
+      totalPay,
       dayCount: employeeDays.length,
       recordCount: employeeDays.reduce(
         (total, day) => total + day.records.length,
@@ -277,12 +209,76 @@ export function buildPayrollSnapshot(collaborators, records, settings) {
       ),
     };
   });
+}
+
+function buildSummaryMap(summaryRows) {
+  return new Map(summaryRows.map((row) => [row.collaborator.id, row]));
+}
+
+function buildDailySummaryMap(dailySummaries) {
+  return new Map(
+    dailySummaries.map((summary) => [`${summary.employeeId}__${summary.date}`, summary])
+  );
+}
+
+function attachWeeklySummaryToDailyRows(
+  dailySummaries,
+  weeklySummaryMap,
+  weeklyHoursLimit
+) {
+  return dailySummaries.map((summary) => {
+    const weeklySummary = weeklySummaryMap.get(summary.employeeId);
+
+    return {
+      ...summary,
+      weeklyTotalWorkedHours: round(weeklySummary?.totalWorkedHours || 0),
+      weeklyOrdinaryHours: round(weeklySummary?.ordinaryHours || 0),
+      weeklyOvertimeHours: round(weeklySummary?.overtimeHours || 0),
+      weeklyOvertimePay: round(weeklySummary?.totalPay || 0),
+      weeklyOvertimeRate: round(weeklySummary?.overtimeRate || 0),
+      weeklyHoursLimit: round(weeklyHoursLimit),
+    };
+  });
+}
+
+function attachSummaryDataToRecords(records, dailySummaryMap, weeklySummaryMap) {
+  return records.map((record) => {
+    const dailySummary = dailySummaryMap.get(`${record.employeeId}__${record.date}`);
+    const weeklySummary = weeklySummaryMap.get(record.employeeId);
+
+    return {
+      ...record,
+      dayWorkedHours: round(dailySummary?.totalWorkedHours || 0),
+      dayWorkedHoursRaw: round(dailySummary?.totalWorkedHoursRaw || 0),
+      weeklyTotalWorkedHours: round(weeklySummary?.totalWorkedHours || 0),
+      weeklyOrdinaryHours: round(weeklySummary?.ordinaryHours || 0),
+      weeklyOvertimeHours: round(weeklySummary?.overtimeHours || 0),
+      weeklyOvertimePay: round(weeklySummary?.totalPay || 0),
+    };
+  });
+}
+
+export function buildPayrollSnapshot(collaborators, records, settings) {
+  const processedRecords = enrichRecords(collaborators, records, settings);
+  const weekRecords = processedRecords.filter((record) =>
+    isDateInWeek(record.date, settings.weekStart)
+  );
+  const dailySummaries = buildDailySummaries(weekRecords);
+  const summaryRows = buildWeeklySummaryRows(collaborators, dailySummaries, settings);
+  const weeklySummaryMap = buildSummaryMap(summaryRows);
+  const dailySummaryMap = buildDailySummaryMap(dailySummaries);
+  const processedWeekRecords = attachSummaryDataToRecords(
+    weekRecords,
+    dailySummaryMap,
+    weeklySummaryMap
+  );
+  const weeklyHoursLimit = round(Math.max(getWeeklyHoursLimit(settings), 0));
 
   const activeClockCount = records.filter((record) => !record.checkOut).length;
   const workersWithOvertime = summaryRows.filter((row) => row.overtimeHours > 0).length;
 
   return {
-    processedRecords: weekRecords,
+    processedRecords: processedWeekRecords,
     dailySummaries,
     summaryRows,
     activeClockCount,
@@ -298,12 +294,12 @@ export function buildPayrollSnapshot(collaborators, records, settings) {
       workersWithOvertime,
       activeRecordsLabel: formatCompactHours(
         sumNumbers(
-          weekRecords
+          processedWeekRecords
             .filter((record) => !record.checkOut)
             .map((record) => record.workedHours)
         )
       ),
-      weeklyHoursLimit: round(getWeeklyHoursLimit(settings)),
+      weeklyHoursLimit,
     },
   };
 }
@@ -316,37 +312,61 @@ export function buildDailyMarkingSnapshot(
 ) {
   const processedRecords = enrichRecords(collaborators, records, settings);
   const reportWeekStart = getMonday(reportDate || new Date());
-  const reportWeekRecords = applyWeeklyOvertime(
-    processedRecords.filter((record) =>
-      isDateInWeek(record.date, reportWeekStart)
-    ),
+  const reportWeekRecords = processedRecords.filter((record) =>
+    isDateInWeek(record.date, reportWeekStart)
+  );
+  const weeklyDailySummaries = buildDailySummaries(reportWeekRecords);
+  const weeklySummaryRows = buildWeeklySummaryRows(
+    collaborators,
+    weeklyDailySummaries,
     settings
   );
+  const weeklySummaryMap = buildSummaryMap(weeklySummaryRows);
+  const weeklyHoursLimit = round(Math.max(getWeeklyHoursLimit(settings), 0));
   const reportDayRecords = reportWeekRecords.filter(
     (record) => record.date === reportDate
   );
-  const summaryRows = buildDailySummaries(reportDayRecords).sort(
+  const reportDaySummaries = buildDailySummaries(reportDayRecords).sort(
     (left, right) =>
       left.collaborator.name.localeCompare(right.collaborator.name) ||
       left.date.localeCompare(right.date)
   );
+  const dailySummaryRows = attachWeeklySummaryToDailyRows(
+    reportDaySummaries,
+    weeklySummaryMap,
+    weeklyHoursLimit
+  );
+  const daySummaryMap = buildDailySummaryMap(reportDaySummaries);
+  const processedDayRecords = attachSummaryDataToRecords(
+    reportDayRecords,
+    daySummaryMap,
+    weeklySummaryMap
+  );
+  const activeWeeklySummaries = dailySummaryRows
+    .map((row) => weeklySummaryMap.get(row.employeeId))
+    .filter(Boolean);
 
   return {
     reportDate,
     weekStart: reportWeekStart,
     weekEnd: getWeekEnd(reportWeekStart),
-    processedRecords: reportDayRecords,
-    summaryRows,
+    processedRecords: processedDayRecords,
+    summaryRows: dailySummaryRows,
+    weeklySummaryRows,
     totals: {
-      employeeCount: summaryRows.length,
+      employeeCount: dailySummaryRows.length,
       recordCount: reportDayRecords.length,
       openCount: reportDayRecords.filter((record) => !record.checkOut).length,
       completedCount: reportDayRecords.filter((record) => record.checkOut).length,
-      workedHours: round(sumNumbers(summaryRows.map((row) => row.totalWorkedHours))),
-      ordinaryHours: round(sumNumbers(summaryRows.map((row) => row.ordinaryHours))),
-      overtimeHours: round(sumNumbers(summaryRows.map((row) => row.overtimeHours))),
-      totalPay: round(sumNumbers(summaryRows.map((row) => row.overtimePay))),
-      weeklyHoursLimit: round(getWeeklyHoursLimit(settings)),
+      workedHours: round(sumNumbers(dailySummaryRows.map((row) => row.totalWorkedHours))),
+      ordinaryHours: round(
+        sumNumbers(activeWeeklySummaries.map((row) => row.ordinaryHours))
+      ),
+      overtimeHours: round(
+        sumNumbers(activeWeeklySummaries.map((row) => row.overtimeHours))
+      ),
+      totalPay: round(sumNumbers(activeWeeklySummaries.map((row) => row.totalPay))),
+      weeklyHoursLimit,
     },
   };
 }
