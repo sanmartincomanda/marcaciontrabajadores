@@ -1819,6 +1819,13 @@ select:disabled {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.inset-panel {
+  margin-top: 20px;
+  border-style: dashed;
+  border-color: rgba(166, 64, 36, 0.22);
+  background: linear-gradient(180deg, rgba(255, 248, 244, 0.94), rgba(255, 253, 250, 0.98));
+}
+
 .slip-summary-compact {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }

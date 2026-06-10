@@ -8,6 +8,7 @@ import {
 } from "./data/collaborators";
 import {
   exportAllSlipsWorkbook,
+  exportBankPaymentFile,
   exportConsolidatedWorkbook,
   exportDailyMarkingWorkbook,
   exportIndividualSlipWorkbook,
@@ -100,6 +101,15 @@ function buildWeekDates(weekStart) {
 
 function formatDayHeader(dayName) {
   return dayName.charAt(0).toUpperCase() + dayName.slice(1);
+}
+
+function formatCompactDayMonth(value) {
+  const [year, month, day] = String(value || "").split("-");
+  if (!year || !month || !day) {
+    return "";
+  }
+
+  return `${day}${month}`;
 }
 
 function buildWeeklyRecordMap(records, weekStart) {
@@ -378,6 +388,10 @@ function App() {
   const [selectedReportDate, setSelectedReportDate] = useState(() =>
     toInputDate(new Date())
   );
+  const [bankPaymentForm, setBankPaymentForm] = useState(() => ({
+    paymentDate: toInputDate(new Date()),
+    shipmentNumber: "",
+  }));
   const [selectedReportEmployeeId, setSelectedReportEmployeeId] = useState("all");
   const [weeklyManualDraft, setWeeklyManualDraft] = useState({});
   const [selectedWeeklyInfo, setSelectedWeeklyInfo] = useState(null);
@@ -620,6 +634,16 @@ function App() {
     ) ?? payroll.summaryRows[0];
   const selectedSlipDays = payroll.dailySummaries.filter(
     (day) => day.employeeId === selectedSlipSummary?.collaborator.id
+  );
+  const bankPaymentRows = payroll.summaryRows.filter(
+    (row) => Number(row.totalPay || 0) > 0
+  );
+  const bankPaymentDetail = `Horas extras ${formatCompactDayMonth(
+    payroll.weekStart
+  )} al ${formatCompactDayMonth(payroll.weekEnd)}`;
+  const bankPaymentTotal = bankPaymentRows.reduce(
+    (total, row) => total + Number(row.totalPay || 0),
+    0
   );
   const selectedWeeklyInfoEntry = selectedWeeklyInfo
     ? weeklyMatrixRows
@@ -1204,6 +1228,18 @@ function App() {
       showNotice(
         "error",
         error?.message || "No pude exportar el paquete de colillas."
+      );
+    }
+  }
+
+  function exportBankFile() {
+    try {
+      exportBankPaymentFile(payroll, bankPaymentForm);
+      showNotice("success", "Archivo del banco exportado.");
+    } catch (error) {
+      showNotice(
+        "error",
+        error?.message || "No pude exportar el archivo de pago del banco."
       );
     }
   }
@@ -2133,6 +2169,79 @@ function App() {
                     onClick={exportSlipPack}
                   >
                     Descargar paquete de colillas
+                  </button>
+                </div>
+
+                <div className="panel inset-panel">
+                  <div className="panel-heading">
+                    <div>
+                      <span className="panel-kicker">Archivo banco</span>
+                      <h2>Generar envio PRN para BAC</h2>
+                    </div>
+                    <span className="panel-meta">Plan fijo AAF6</span>
+                  </div>
+
+                  <div className="form-grid">
+                    <label>
+                      Fecha de pago
+                      <input
+                        type="date"
+                        value={bankPaymentForm.paymentDate}
+                        onChange={(event) =>
+                          setBankPaymentForm((current) => ({
+                            ...current,
+                            paymentDate: event.target.value,
+                          }))
+                        }
+                      />
+                    </label>
+                    <label>
+                      Numero de envio
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={5}
+                        placeholder="175"
+                        value={bankPaymentForm.shipmentNumber}
+                        onChange={(event) =>
+                          setBankPaymentForm((current) => ({
+                            ...current,
+                            shipmentNumber: event.target.value.replace(/\D/g, ""),
+                          }))
+                        }
+                      />
+                    </label>
+                  </div>
+
+                  <div className="slip-summary slip-summary-compact">
+                    <StatCard
+                      label="Planilla"
+                      value="AAF6"
+                      caption="Numero de plan de planilla"
+                    />
+                    <StatCard
+                      label="Detalle"
+                      value={bankPaymentDetail}
+                      caption="Concepto que viaja en el archivo"
+                    />
+                    <StatCard
+                      label="Registros"
+                      value={String(bankPaymentRows.length)}
+                      caption="Colaboradores con pago de horas extras"
+                    />
+                    <StatCard
+                      label="Total envio"
+                      value={formatCurrency(bankPaymentTotal)}
+                      caption="Total acumulado del archivo PRN"
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    className="primary-button"
+                    onClick={exportBankFile}
+                  >
+                    Descargar archivo banco (.PRN)
                   </button>
                 </div>
 

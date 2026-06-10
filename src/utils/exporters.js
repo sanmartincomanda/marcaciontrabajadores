@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
 import * as XLSX from "xlsx";
+import { normalizeDocumentId } from "../data/collaborators";
 import { formatDateLabel, getWeekEnd } from "./time";
 
 const BRAND = {
@@ -13,6 +14,8 @@ const BRAND = {
   editable: "FFFFF4CC",
 };
 
+const BANK_PAYROLL_PLAN_NUMBER = "AAF6";
+
 function buildSheet(rows, widths) {
   const sheet = XLSX.utils.aoa_to_sheet(rows);
   sheet["!cols"] = widths.map((width) => ({ wch: width }));
@@ -21,6 +24,46 @@ function buildSheet(rows, widths) {
 
 function formatWeekRange(start, end) {
   return `Semana del ${formatDateLabel(start)} al ${formatDateLabel(end)}`;
+}
+
+function formatCompactDayMonth(value) {
+  const [year, month, day] = String(value || "").split("-");
+  if (!year || !month || !day) {
+    return "";
+  }
+
+  return `${day}${month}`;
+}
+
+function formatBankDate(value) {
+  return String(value || "").replace(/-/g, "");
+}
+
+function formatBankAmount(value) {
+  const cents = Math.round(Number(value || 0) * 100);
+  return String(Math.max(cents, 0)).padStart(13, "0");
+}
+
+function padRight(value, length) {
+  return String(value ?? "").padEnd(length, " ");
+}
+
+function buildBankDetailDescription(snapshot) {
+  return `Horas extras ${formatCompactDayMonth(snapshot.weekStart)} al ${formatCompactDayMonth(snapshot.weekEnd)}`;
+}
+
+function buildBankPaymentRows(snapshot) {
+  return snapshot.summaryRows.filter((row) => Number(row.totalPay || 0) > 0);
+}
+
+function triggerTextDownload(content, filename) {
+  const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+  const url = window.URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  window.setTimeout(() => window.URL.revokeObjectURL(url), 1000);
 }
 
 function getLogoUrl() {
@@ -779,5 +822,68 @@ export async function exportAllSlipsWorkbook(snapshot) {
   await saveWorkbook(
     workbook,
     `colillas-horas-extras-${snapshot.weekStart}-${getWeekEnd(snapshot.weekStart)}.xlsx`
+  );
+}
+
+export function exportBankPaymentFile(snapshot, options) {
+  const paymentDate = String(options?.paymentDate || "").trim();
+  const shipmentInput = String(options?.shipmentNumber || "").trim();
+
+  if (!paymentDate) {
+    throw new Error("Indica la fecha de pago antes de descargar el archivo del banco.");
+  }
+
+  if (!/^\d{1,5}$/.test(shipmentInput)) {
+    throw new Error("El numero de envio debe tener entre 1 y 5 digitos.");
+  }
+
+  const rows = buildBankPaymentRows(snapshot);
+  if (rows.length === 0) {
+    throw new Error("No hay pagos de horas extras para exportar al banco en esta semana.");
+  }
+
+  const shipmentPadded = shipmentInput.padStart(5, "0");
+  const shipmentForFilename = String(Number(shipmentInput));
+  const bankDate = formatBankDate(paymentDate);
+  const detail = padRight(buildBankDetailDescription(snapshot), 31);
+  const totalAmount = formatBankAmount(
+    rows.reduce((sum, row) => sum + Number(row.totalPay || 0), 0)
+  );
+
+  const header = (
+    `B${BANK_PAYROLL_PLAN_NUMBER}${shipmentPadded}` +
+    " ".repeat(20) +
+    "00000" +
+    bankDate +
+    totalAmount +
+    String(rows.length).padStart(5, "0")
+  ).padEnd(122, " ");
+
+  const detailLines = rows.map((row, index) => {
+    const documentId = padRight(
+      normalizeDocumentId(row.collaborator.documentId),
+      16
+    );
+    const sequence = String(index + 1).padStart(5, "0");
+    const amount = formatBankAmount(row.totalPay);
+    const name = padRight(row.collaborator.name.toUpperCase(), 30);
+
+    return (
+      `T${BANK_PAYROLL_PLAN_NUMBER}${shipmentPadded}` +
+      documentId +
+      " ".repeat(4) +
+      sequence +
+      bankDate +
+      amount +
+      " ".repeat(5) +
+      detail +
+      name
+    ).padEnd(122, " ");
+  });
+
+  const content = [header, ...detailLines].join("\r\n");
+  triggerTextDownload(
+    content,
+    `INP${BANK_PAYROLL_PLAN_NUMBER}${shipmentForFilename}.PRN`
   );
 }
