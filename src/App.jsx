@@ -1165,9 +1165,13 @@ function App() {
     });
   }
 
-  function exportConsolidated() {
-    exportConsolidatedWorkbook(payroll);
-    showNotice("success", "Consolidado exportado a Excel.");
+  async function exportConsolidated() {
+    try {
+      await exportConsolidatedWorkbook(payroll);
+      showNotice("success", "Consolidado exportado a Excel.");
+    } catch (error) {
+      showNotice("error", error?.message || "No pude exportar el consolidado.");
+    }
   }
 
   function exportDailyReport() {
@@ -1175,18 +1179,33 @@ function App() {
     showNotice("success", "Reporte diario de marcaciones exportado.");
   }
 
-  function exportSlip() {
+  async function exportSlip() {
     if (!selectedSlipSummary) {
       showNotice("error", "Selecciona un colaborador para generar la colilla.");
       return;
     }
-    exportIndividualSlipWorkbook(payroll, selectedSlipSummary.collaborator.id);
-    showNotice("success", "Colilla individual exportada.");
+
+    try {
+      await exportIndividualSlipWorkbook(
+        payroll,
+        selectedSlipSummary.collaborator.id
+      );
+      showNotice("success", "Colilla individual exportada.");
+    } catch (error) {
+      showNotice("error", error?.message || "No pude exportar la colilla.");
+    }
   }
 
-  function exportSlipPack() {
-    exportAllSlipsWorkbook(payroll);
-    showNotice("success", "Paquete completo de colillas exportado.");
+  async function exportSlipPack() {
+    try {
+      await exportAllSlipsWorkbook(payroll);
+      showNotice("success", "Paquete completo de colillas exportado.");
+    } catch (error) {
+      showNotice(
+        "error",
+        error?.message || "No pude exportar el paquete de colillas."
+      );
+    }
   }
 
   if (!currentUser || !activeUser) {
