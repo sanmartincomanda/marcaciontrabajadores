@@ -55,6 +55,8 @@ const WEEKLY_SHIFT_FIELDS = [
   },
 ];
 
+const BANK_PAYMENT_DETAIL_PREFIX = "Viaticos alimentos y transporte";
+
 const tabs = [
   { id: "marcacion", label: "Terminal de marcacion" },
   { id: "resumen", label: "Resumen semanal" },
@@ -638,7 +640,7 @@ function App() {
   const bankPaymentRows = payroll.summaryRows.filter(
     (row) => Number(row.totalPay || 0) > 0
   );
-  const bankPaymentDetail = `Horas extras ${formatCompactDayMonth(
+  const bankPaymentDetail = `${BANK_PAYMENT_DETAIL_PREFIX} ${formatCompactDayMonth(
     payroll.weekStart
   )} al ${formatCompactDayMonth(payroll.weekEnd)}`;
   const bankPaymentTotal = bankPaymentRows.reduce(
@@ -2227,7 +2229,7 @@ function App() {
                     <StatCard
                       label="Registros"
                       value={String(bankPaymentRows.length)}
-                      caption="Colaboradores con pago de horas extras"
+                      caption="Colaboradores incluidos en el archivo"
                     />
                     <StatCard
                       label="Total envio"

@@ -15,6 +15,9 @@ const BRAND = {
 };
 
 const BANK_PAYROLL_PLAN_NUMBER = "AAF6";
+const BANK_PAYMENT_DETAIL_PREFIX = "Viaticos alimentos y transporte";
+const CONSOLIDATED_REPORT_TITLE =
+  "Consolidado Semanal de Pago de Viaticos de transporte y alimento";
 
 function buildSheet(rows, widths) {
   const sheet = XLSX.utils.aoa_to_sheet(rows);
@@ -49,7 +52,7 @@ function padRight(value, length) {
 }
 
 function buildBankDetailDescription(snapshot) {
-  return `Horas extras ${formatCompactDayMonth(snapshot.weekStart)} al ${formatCompactDayMonth(snapshot.weekEnd)}`;
+  return `${BANK_PAYMENT_DETAIL_PREFIX} ${formatCompactDayMonth(snapshot.weekStart)} al ${formatCompactDayMonth(snapshot.weekEnd)}`;
 }
 
 function buildBankPaymentRows(snapshot) {
@@ -504,7 +507,7 @@ async function createConsolidatedWorkbook(snapshot) {
 
   applyLetterhead(worksheet, {
     logoId,
-    title: "Consolidado Semanal de Pago de Horas Extras",
+    title: CONSOLIDATED_REPORT_TITLE,
     subtitle: "Documento de respaldo fiscal y laboral",
     weekRange: formatWeekRange(snapshot.weekStart, snapshot.weekEnd),
     documentLabel:
@@ -839,7 +842,7 @@ export function exportBankPaymentFile(snapshot, options) {
 
   const rows = buildBankPaymentRows(snapshot);
   if (rows.length === 0) {
-    throw new Error("No hay pagos de horas extras para exportar al banco en esta semana.");
+    throw new Error("No hay pagos para exportar al banco en esta semana.");
   }
 
   const shipmentPadded = shipmentInput.padStart(5, "0");
