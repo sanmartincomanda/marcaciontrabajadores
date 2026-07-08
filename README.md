@@ -51,6 +51,14 @@ VITE_FIREBASE_APP_ID=
 VITE_FIREBASE_NAMESPACE=csm-granada-horas-extras
 ```
 
+Para volver a publicar las reglas de Firestore:
+
+```bash
+npm run firebase:rules
+```
+
+Si Firestore estaba en modo prueba y vencio, este comando vuelve a dejar activas las reglas del proyecto.
+
 ## Build de produccion
 
 ```bash
