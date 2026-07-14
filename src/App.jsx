@@ -55,7 +55,7 @@ const WEEKLY_SHIFT_FIELDS = [
   },
 ];
 
-const BANK_PAYMENT_DETAIL_PREFIX = "Viaticos alimentos y transporte";
+const BANK_PAYMENT_DETAIL_PREFIX = "Viat.alim.y.transp";
 
 const tabs = [
   { id: "marcacion", label: "Terminal de marcacion" },

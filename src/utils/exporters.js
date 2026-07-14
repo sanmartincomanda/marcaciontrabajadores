@@ -15,7 +15,7 @@ const BRAND = {
 };
 
 const BANK_PAYROLL_PLAN_NUMBER = "AAF6";
-const BANK_PAYMENT_DETAIL_PREFIX = "Viaticos alimentos y transporte";
+const BANK_PAYMENT_DETAIL_PREFIX = "Viat.alim.y.transp";
 const CONSOLIDATED_REPORT_TITLE =
   "Consolidado Semanal de Pago de Viaticos de transporte y alimento";
 
@@ -48,7 +48,9 @@ function formatBankAmount(value) {
 }
 
 function padRight(value, length) {
-  return String(value ?? "").padEnd(length, " ");
+  return String(value ?? "")
+    .slice(0, length)
+    .padEnd(length, " ");
 }
 
 function buildBankDetailDescription(snapshot) {
