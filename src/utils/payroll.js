@@ -13,6 +13,21 @@ function round(value) {
   return Number(Number(value || 0).toFixed(2));
 }
 
+function isDirectOvertimeRecord(record) {
+  return (
+    record?.source === "manual-overtime" ||
+    Number(record?.manualOvertimeHours || 0) > 0
+  );
+}
+
+function getRecordSourceLabel(record) {
+  if (isDirectOvertimeRecord(record)) {
+    return "Horas directas";
+  }
+
+  return record?.source === "clock" ? "Marcacion" : "Manual";
+}
+
 function buildCollaboratorById(collaborators) {
   return Object.fromEntries(
     collaborators.map((collaborator) => [collaborator.id, collaborator])
@@ -78,7 +93,11 @@ function enrichRecords(collaborators, records, settings) {
       }
 
       const { ordinaryRate, overtimeRate } = buildRates(collaborator, settings);
-      const workedHours = calculateWorkedHours(record);
+      const directOvertimeHours = round(Number(record.manualOvertimeHours || 0));
+      const directOvertime = isDirectOvertimeRecord(record);
+      const workedHours = directOvertime
+        ? directOvertimeHours
+        : calculateWorkedHours(record);
 
       return {
         ...record,
@@ -86,6 +105,14 @@ function enrichRecords(collaborators, records, settings) {
         dayLabel: getDayLabel(record.date),
         ordinaryRate,
         overtimeRate,
+        isDirectOvertime: directOvertime,
+        manualOvertimeHours: directOvertimeHours,
+        sourceLabel: getRecordSourceLabel(record),
+        statusLabel: directOvertime
+          ? "Horas extras directas"
+          : record.checkOut
+            ? "Completo"
+            : "Entrada abierta",
         workedHours: round(workedHours),
       };
     })
@@ -108,23 +135,32 @@ function buildDailySummaries(processedRecords) {
         ordinaryRate: record.ordinaryRate,
         overtimeRate: record.overtimeRate,
         records: [],
-        totalWorkedHoursRaw: 0,
+        totalTimedWorkedHoursRaw: 0,
+        totalManualOvertimeHours: 0,
         totalBreakMinutes: 0,
         lastMovementAt: "",
         lastMovementType: "",
       };
 
     current.records.push(record);
-    current.totalWorkedHoursRaw += Number(record.workedHours || 0);
+    if (record.isDirectOvertime) {
+      current.totalManualOvertimeHours += Number(
+        record.manualOvertimeHours || record.workedHours || 0
+      );
+    } else {
+      current.totalTimedWorkedHoursRaw += Number(record.workedHours || 0);
+    }
     current.totalBreakMinutes += Number(record.breakMinutes || 0);
 
-    const lastMovementAt = record.checkOut
-      ? new Date(`${record.date}T${record.checkOut}:00`).toISOString()
-      : new Date(`${record.date}T${record.checkIn || "00:00"}:00`).toISOString();
+    if (!record.isDirectOvertime && (record.checkIn || record.checkOut)) {
+      const lastMovementAt = record.checkOut
+        ? new Date(`${record.date}T${record.checkOut}:00`).toISOString()
+        : new Date(`${record.date}T${record.checkIn || "00:00"}:00`).toISOString();
 
-    if (!current.lastMovementAt || lastMovementAt > current.lastMovementAt) {
-      current.lastMovementAt = lastMovementAt;
-      current.lastMovementType = record.checkOut ? "Salida" : "Entrada";
+      if (!current.lastMovementAt || lastMovementAt > current.lastMovementAt) {
+        current.lastMovementAt = lastMovementAt;
+        current.lastMovementType = record.checkOut ? "Salida" : "Entrada";
+      }
     }
 
     dailyMap.set(key, current);
@@ -135,20 +171,33 @@ function buildDailySummaries(processedRecords) {
       const records = [...entry.records].sort(
         (left, right) => getRecordSortTime(left) - getRecordSortTime(right)
       );
-      const openRecordCount = records.filter((record) => !record.checkOut).length;
-      const completedRecordCount = records.length - openRecordCount;
+      const openRecordCount = records.filter(
+        (record) => !record.isDirectOvertime && !record.checkOut
+      ).length;
+      const completedRecordCount = records.filter(
+        (record) => record.isDirectOvertime || record.checkOut
+      ).length;
 
       let statusLabel = "Completo";
       if (openRecordCount > 0 && completedRecordCount > 0) {
         statusLabel = "Con turno abierto";
       } else if (openRecordCount > 0) {
         statusLabel = "Entrada abierta";
+      } else if (
+        records.length > 0 &&
+        records.every((record) => record.isDirectOvertime)
+      ) {
+        statusLabel = "Horas extras directas";
+      } else if (records.some((record) => record.isDirectOvertime)) {
+        statusLabel = "Completo + horas directas";
       } else if (records.length > 1) {
         statusLabel = "Varios tramos";
       }
 
-      const totalWorkedHoursRaw = round(entry.totalWorkedHoursRaw);
-      const totalWorkedHours = round(roundWorkedHours(totalWorkedHoursRaw));
+      const totalWorkedHoursRaw = round(entry.totalTimedWorkedHoursRaw);
+      const timedWorkedHours = round(roundWorkedHours(totalWorkedHoursRaw));
+      const manualOvertimeHours = round(entry.totalManualOvertimeHours);
+      const totalWorkedHours = round(timedWorkedHours + manualOvertimeHours);
 
       return {
         ...entry,
@@ -158,10 +207,14 @@ function buildDailySummaries(processedRecords) {
         completedRecordCount,
         statusLabel,
         totalWorkedHoursRaw,
+        timedWorkedHours,
+        manualOvertimeHours,
         totalWorkedHours,
         scheduleLabel: records
           .map((record) =>
-            record.checkOut
+            record.isDirectOvertime
+              ? `Horas extras directas: ${formatCompactHours(record.manualOvertimeHours || record.workedHours)} h`
+              : record.checkOut
               ? `${record.checkIn} - ${record.checkOut}`
               : `${record.checkIn} - abierta`
           )
@@ -185,11 +238,22 @@ function buildWeeklySummaryRows(collaborators, dailySummaries, settings) {
     const employeeDays = dailySummaries.filter(
       (summary) => summary.employeeId === collaborator.id
     );
-    const totalWorkedHours = round(
-      sumNumbers(employeeDays.map((summary) => summary.totalWorkedHours))
+    const timedWorkedHours = round(
+      sumNumbers(employeeDays.map((summary) => summary.timedWorkedHours))
     );
-    const ordinaryHours = round(Math.min(totalWorkedHours, weeklyHoursLimit));
-    const overtimeHours = round(Math.max(totalWorkedHours - weeklyHoursLimit, 0));
+    const manualOvertimeHours = round(
+      sumNumbers(employeeDays.map((summary) => summary.manualOvertimeHours))
+    );
+    const totalWorkedHours = round(
+      timedWorkedHours + manualOvertimeHours
+    );
+    const ordinaryHours = round(Math.min(timedWorkedHours, weeklyHoursLimit));
+    const calculatedOvertimeHours = round(
+      Math.max(timedWorkedHours - weeklyHoursLimit, 0)
+    );
+    const overtimeHours = round(
+      calculatedOvertimeHours + manualOvertimeHours
+    );
     const { ordinaryRate, overtimeRate } = buildRates(collaborator, settings);
     const totalPay = round(overtimeHours * overtimeRate);
 
@@ -198,8 +262,11 @@ function buildWeeklySummaryRows(collaborators, dailySummaries, settings) {
       salary: round(collaborator.salary),
       ordinaryRate,
       overtimeRate,
+      timedWorkedHours,
+      manualOvertimeHours,
       totalWorkedHours,
       ordinaryHours,
+      calculatedOvertimeHours,
       overtimeHours,
       totalPay,
       dayCount: employeeDays.length,
@@ -274,7 +341,9 @@ export function buildPayrollSnapshot(collaborators, records, settings) {
   );
   const weeklyHoursLimit = round(Math.max(getWeeklyHoursLimit(settings), 0));
 
-  const activeClockCount = records.filter((record) => !record.checkOut).length;
+  const activeClockCount = records.filter(
+    (record) => !isDirectOvertimeRecord(record) && !record.checkOut
+  ).length;
   const workersWithOvertime = summaryRows.filter((row) => row.overtimeHours > 0).length;
 
   return {
@@ -295,7 +364,7 @@ export function buildPayrollSnapshot(collaborators, records, settings) {
       activeRecordsLabel: formatCompactHours(
         sumNumbers(
           processedWeekRecords
-            .filter((record) => !record.checkOut)
+            .filter((record) => !record.isDirectOvertime && !record.checkOut)
             .map((record) => record.workedHours)
         )
       ),
@@ -356,8 +425,12 @@ export function buildDailyMarkingSnapshot(
     totals: {
       employeeCount: dailySummaryRows.length,
       recordCount: reportDayRecords.length,
-      openCount: reportDayRecords.filter((record) => !record.checkOut).length,
-      completedCount: reportDayRecords.filter((record) => record.checkOut).length,
+      openCount: reportDayRecords.filter(
+        (record) => !record.isDirectOvertime && !record.checkOut
+      ).length,
+      completedCount: reportDayRecords.filter(
+        (record) => record.isDirectOvertime || record.checkOut
+      ).length,
       workedHours: round(sumNumbers(dailySummaryRows.map((row) => row.totalWorkedHours))),
       ordinaryHours: round(
         sumNumbers(activeWeeklySummaries.map((row) => row.ordinaryHours))

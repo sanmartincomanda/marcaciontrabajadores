@@ -57,6 +57,21 @@ const WEEKLY_SHIFT_FIELDS = [
 
 const BANK_PAYMENT_DETAIL_PREFIX = "Viat.alim.y.transp";
 
+function isDirectOvertimeRecord(record) {
+  return (
+    record?.source === "manual-overtime" ||
+    Number(record?.manualOvertimeHours || 0) > 0
+  );
+}
+
+function getRecordSourceLabel(record) {
+  if (isDirectOvertimeRecord(record)) {
+    return "Horas directas";
+  }
+
+  return record?.source === "clock" ? "Marcacion" : "Manual";
+}
+
 const tabs = [
   { id: "marcacion", label: "Terminal de marcacion" },
   { id: "resumen", label: "Resumen semanal" },
@@ -118,6 +133,10 @@ function buildWeeklyRecordMap(records, weekStart) {
   const weekMap = {};
 
   for (const record of records) {
+    if (isDirectOvertimeRecord(record)) {
+      continue;
+    }
+
     if (!isDateInWeek(record.date, weekStart)) {
       continue;
     }
@@ -226,7 +245,11 @@ function validateWeeklyDayDraft(draft) {
 
 function buildOpenRecordMap(records, targetDate) {
   return records.reduce((collection, record) => {
-    if (record.checkOut || (targetDate && record.date !== targetDate)) {
+    if (
+      isDirectOvertimeRecord(record) ||
+      record.checkOut ||
+      (targetDate && record.date !== targetDate)
+    ) {
       return collection;
     }
 
@@ -275,6 +298,7 @@ function createManualForm(weekStart, employeeId = collaborators[0]?.id ?? "") {
     checkIn: "",
     checkOut: "",
     breakMinutes: "0",
+    manualOvertimeHours: "",
     source: "manual",
   };
 }
@@ -601,9 +625,12 @@ function App() {
     totals: {
       employeeCount: filteredDailySummaryRows.length,
       recordCount: filteredDailyRecords.length,
-      openCount: filteredDailyRecords.filter((record) => !record.checkOut).length,
-      completedCount: filteredDailyRecords.filter((record) => record.checkOut)
-        .length,
+      openCount: filteredDailyRecords.filter(
+        (record) => !record.isDirectOvertime && !record.checkOut
+      ).length,
+      completedCount: filteredDailyRecords.filter(
+        (record) => record.isDirectOvertime || record.checkOut
+      ).length,
       workedHours: filteredDailySummaryRows.reduce(
         (total, row) => total + row.totalWorkedHours,
         0
@@ -853,16 +880,19 @@ function App() {
     const existingRecord = editingRecordId
       ? records.find((record) => record.id === editingRecordId)
       : null;
+    const reuseRecordId =
+      existingRecord && !isDirectOvertimeRecord(existingRecord);
     const payload = {
-      id: editingRecordId ?? crypto.randomUUID(),
+      id: reuseRecordId ? editingRecordId : crypto.randomUUID(),
       employeeId: manualForm.employeeId,
       date: manualForm.date,
       checkIn: manualForm.checkIn,
       checkOut: manualForm.checkOut,
       breakMinutes: Number(manualForm.breakMinutes || 0),
       source: manualForm.source,
+      manualOvertimeHours: 0,
       updatedAt: timestamp,
-      createdAt: existingRecord?.createdAt || timestamp,
+      createdAt: reuseRecordId ? existingRecord.createdAt : timestamp,
     };
 
     try {
@@ -882,6 +912,65 @@ function App() {
     setManualForm(createManualForm(settings.weekStart, manualForm.employeeId));
   }
 
+  async function handleManualOvertimeSubmit() {
+    if (!canSyncData) {
+      showNotice("error", syncState.error || "Firebase aun no esta listo.");
+      return;
+    }
+
+    if (!manualForm.employeeId || !manualForm.date) {
+      showNotice(
+        "error",
+        "Completa colaborador y fecha para guardar las horas extras directas."
+      );
+      return;
+    }
+
+    const manualOvertimeHours = Number(manualForm.manualOvertimeHours || 0);
+    if (!Number.isFinite(manualOvertimeHours) || manualOvertimeHours <= 0) {
+      showNotice(
+        "error",
+        "Indica una cantidad valida de horas extras directas."
+      );
+      return;
+    }
+
+    const timestamp = new Date().toISOString();
+    const existingRecord = editingRecordId
+      ? records.find((record) => record.id === editingRecordId)
+      : null;
+    const reuseRecordId =
+      existingRecord && isDirectOvertimeRecord(existingRecord);
+    const payload = {
+      id: reuseRecordId ? editingRecordId : crypto.randomUUID(),
+      employeeId: manualForm.employeeId,
+      date: manualForm.date,
+      checkIn: "",
+      checkOut: "",
+      breakMinutes: 0,
+      source: "manual-overtime",
+      manualOvertimeHours,
+      updatedAt: timestamp,
+      createdAt: reuseRecordId ? existingRecord.createdAt : timestamp,
+    };
+
+    try {
+      await saveRecordToCloud(payload);
+    } catch (error) {
+      showNotice("error", describeCloudSyncError(error));
+      return;
+    }
+
+    showNotice(
+      "success",
+      reuseRecordId
+        ? "Horas extras directas actualizadas."
+        : "Horas extras directas guardadas."
+    );
+    setEditingRecordId(null);
+    setManualForm(createManualForm(settings.weekStart, manualForm.employeeId));
+  }
+
   function handleEditRecord(record) {
     setEditingRecordId(record.id);
     setSelectedTab("manual");
@@ -891,7 +980,10 @@ function App() {
       checkIn: record.checkIn || "",
       checkOut: record.checkOut || "",
       breakMinutes: String(record.breakMinutes || 0),
-      source: record.source || "manual",
+      manualOvertimeHours: record.manualOvertimeHours
+        ? String(record.manualOvertimeHours)
+        : "",
+      source: record.source === "clock" ? "clock" : "manual",
     });
   }
 
@@ -1738,8 +1830,9 @@ function App() {
                     <span>Registros cerrados</span>
                     <strong>
                       {
-                        payroll.processedRecords.filter((record) => record.checkOut)
-                          .length
+                        payroll.processedRecords.filter(
+                          (record) => record.isDirectOvertime || record.checkOut
+                        ).length
                       }
                     </strong>
                   </div>
@@ -1747,8 +1840,9 @@ function App() {
                     <span>Registros pendientes</span>
                     <strong>
                       {
-                        payroll.processedRecords.filter((record) => !record.checkOut)
-                          .length
+                        payroll.processedRecords.filter(
+                          (record) => !record.isDirectOvertime && !record.checkOut
+                        ).length
                       }
                     </strong>
                   </div>
@@ -2023,6 +2117,29 @@ function App() {
                     </select>
                   </label>
 
+                  <label>
+                    Horas extras directas
+                    <input
+                      type="number"
+                      min="0.5"
+                      step="0.5"
+                      value={manualForm.manualOvertimeHours}
+                      disabled={!canSyncData}
+                      onChange={(event) =>
+                        setManualForm((current) => ({
+                          ...current,
+                          manualOvertimeHours: event.target.value,
+                        }))
+                      }
+                      placeholder="Ej. 16"
+                    />
+                  </label>
+
+                  <span className="empty-state">
+                    Usa este campo si quieres cargar horas extras sin entrada ni
+                    salida.
+                  </span>
+
                   <div className="button-row">
                     <button
                       type="submit"
@@ -2030,6 +2147,14 @@ function App() {
                       disabled={!canSyncData}
                     >
                       {editingRecordId ? "Guardar cambios" : "Agregar registro"}
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      disabled={!canSyncData}
+                      onClick={handleManualOvertimeSubmit}
+                    >
+                      Guardar horas extras directas
                     </button>
                     <button
                       type="button"
@@ -2079,12 +2204,24 @@ function App() {
                           </td>
                           <td>{record.collaborator.name}</td>
                           <td>{record.collaborator.documentId}</td>
-                          <td>{record.checkIn || "--"}</td>
-                          <td>{record.checkOut || "Pendiente"}</td>
-                          <td>{Number(record.breakMinutes || 0)} min</td>
+                          <td>
+                            {record.isDirectOvertime
+                              ? "Horas directas"
+                              : record.checkIn || "--"}
+                          </td>
+                          <td>
+                            {record.isDirectOvertime
+                              ? "--"
+                              : record.checkOut || "Pendiente"}
+                          </td>
+                          <td>
+                            {record.isDirectOvertime
+                              ? "--"
+                              : `${Number(record.breakMinutes || 0)} min`}
+                          </td>
                           <td>{formatHours(record.workedHours)}</td>
                           <td>{formatHours(record.dayWorkedHours)}</td>
-                          <td>{record.source === "clock" ? "Marcacion" : "Manual"}</td>
+                          <td>{record.sourceLabel || getRecordSourceLabel(record)}</td>
                           <td>
                             <div className="mini-actions">
                               <button
@@ -2378,14 +2515,26 @@ function App() {
                         <tr key={record.id}>
                           <td>{record.collaborator.name}</td>
                           <td>{record.collaborator.documentId}</td>
-                          <td>{record.checkIn || "--"}</td>
-                          <td>{record.checkOut || "Pendiente"}</td>
-                          <td>{Number(record.breakMinutes || 0)} min</td>
+                          <td>
+                            {record.isDirectOvertime
+                              ? "Horas directas"
+                              : record.checkIn || "--"}
+                          </td>
+                          <td>
+                            {record.isDirectOvertime
+                              ? "--"
+                              : record.checkOut || "Pendiente"}
+                          </td>
+                          <td>
+                            {record.isDirectOvertime
+                              ? "--"
+                              : `${Number(record.breakMinutes || 0)} min`}
+                          </td>
                           <td>{formatHours(record.workedHours)}</td>
                           <td>{formatHours(record.dayWorkedHours)}</td>
                           <td>{formatHours(record.weeklyTotalWorkedHours)}</td>
-                          <td>{record.source === "clock" ? "Marcacion" : "Manual"}</td>
-                          <td>{record.checkOut ? "Completo" : "Entrada abierta"}</td>
+                          <td>{record.sourceLabel || getRecordSourceLabel(record)}</td>
+                          <td>{record.statusLabel}</td>
                         </tr>
                       ))}
                       {dailyReportSnapshot.processedRecords.length === 0 ? (

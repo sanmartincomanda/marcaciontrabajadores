@@ -48,6 +48,7 @@ function normalizeRecord(record, docId = record?.id) {
     checkOut: record?.checkOut || "",
     breakMinutes: Number(record?.breakMinutes || 0),
     source: record?.source || "manual",
+    manualOvertimeHours: Number(record?.manualOvertimeHours || 0),
     createdAt: record?.createdAt || new Date().toISOString(),
     updatedAt: record?.updatedAt || new Date().toISOString(),
   };

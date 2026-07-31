@@ -20,6 +20,11 @@ const rawCollaborators = [
     documentId: "201-050397-0002B",
   },
   {
+    name: "David Alexander Lacayo Sosa",
+    salary: 11350.08,
+    documentId: "201-081198-1004T",
+  },
+  {
     name: "Harvey Joffrey Mora Morales",
     salary: 11350.08,
     documentId: "201-180401-1000S",

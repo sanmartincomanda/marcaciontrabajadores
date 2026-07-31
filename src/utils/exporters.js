@@ -329,13 +329,15 @@ function buildRawRows(snapshot) {
     date: formatDateLabel(record.date),
     dayLabel: record.dayLabel,
     collaborator: record.collaborator.name,
-    checkIn: record.checkIn || "",
-    checkOut: record.checkOut || "",
-    breakMinutes: Number(record.breakMinutes || 0),
+    checkIn: record.isDirectOvertime ? "Horas directas" : record.checkIn || "",
+    checkOut: record.isDirectOvertime ? "" : record.checkOut || "",
+    breakMinutes: record.isDirectOvertime
+      ? ""
+      : Number(record.breakMinutes || 0),
     workedHours: record.workedHours,
     dayWorkedHours: record.dayWorkedHours,
-    source: record.source === "clock" ? "Marcacion" : "Manual",
-    status: record.checkOut ? "Completo" : "Pendiente",
+    source: record.sourceLabel || (record.source === "clock" ? "Marcacion" : "Manual"),
+    status: record.statusLabel || (record.checkOut ? "Completo" : "Pendiente"),
   }));
 }
 
@@ -416,14 +418,14 @@ function buildDailyMarkingRawRows(snapshot) {
     ...snapshot.processedRecords.map((record) => [
       record.collaborator.name,
       record.collaborator.documentId,
-      record.checkIn || "",
-      record.checkOut || "",
-      Number(record.breakMinutes || 0),
+      record.isDirectOvertime ? "Horas directas" : record.checkIn || "",
+      record.isDirectOvertime ? "" : record.checkOut || "",
+      record.isDirectOvertime ? "" : Number(record.breakMinutes || 0),
       record.workedHours,
       record.dayWorkedHours,
       record.weeklyTotalWorkedHours,
-      record.source === "clock" ? "Marcacion" : "Manual",
-      record.checkOut ? "Completo" : "Entrada abierta",
+      record.sourceLabel || (record.source === "clock" ? "Marcacion" : "Manual"),
+      record.statusLabel || (record.checkOut ? "Completo" : "Entrada abierta"),
     ]),
   ];
 }
