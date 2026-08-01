@@ -7,6 +7,10 @@ import {
   firestoreDb,
   isFirebaseConfigured,
 } from "../lib/firebase";
+import {
+  normalizeDocumentId,
+  resolveCollaboratorId,
+} from "../data/collaborators";
 
 function getSettingsRef() {
   return doc(firestoreDb, "apps", firebaseNamespace, "meta", "settings");
@@ -40,9 +44,20 @@ function normalizeSettings(settings, fallbackSettings) {
 }
 
 function normalizeRecord(record, docId = record?.id) {
+  const referenceTimestamp =
+    record?.createdAt || record?.updatedAt || record?.date || "";
+  const resolvedEmployeeId = resolveCollaboratorId(
+    record?.employeeDocumentId || record?.employeeId || "",
+    referenceTimestamp
+  );
+  const employeeDocumentId = resolvedEmployeeId
+    ? normalizeDocumentId(resolvedEmployeeId)
+    : "";
+
   return {
     id: docId,
-    employeeId: record?.employeeId || "",
+    employeeId: resolvedEmployeeId || record?.employeeId || "",
+    employeeDocumentId,
     date: record?.date || "",
     checkIn: record?.checkIn || "",
     checkOut: record?.checkOut || "",

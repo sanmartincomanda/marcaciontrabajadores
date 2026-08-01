@@ -23,6 +23,7 @@ const rawCollaborators = [
     name: "David Alexander Lacayo Sosa",
     salary: 11350.08,
     documentId: "201-081198-1004T",
+    branch: "Nindiri",
   },
   {
     name: "Harvey Joffrey Mora Morales",
@@ -86,10 +87,42 @@ const rawCollaborators = [
   },
 ];
 
+export const DEFAULT_BRANCH = "Granada";
+
+const BRANCH_ORDER = [DEFAULT_BRANCH, "Nindiri"];
+const LEGACY_EMPLOYEE_ID_CUTOVER_AT = Date.parse("2026-07-31T07:52:14-06:00");
+const LEGACY_DOCUMENT_ORDER_BEFORE_DAVID = [
+  "201-191195-0002U",
+  "201-211069-0003K",
+  "042-100586-0003V",
+  "201-050397-0002B",
+  "201-180401-1000S",
+  "888-230901-1001K",
+  "201-120298-1000P",
+  "001-230289-0010H",
+  "201-220999-1005G",
+  "201-190189-0007S",
+  "201-131093-0004N",
+  "201-080697-0005F",
+  "201-280591-0009E",
+  "201-140888-0007H",
+  "201-130989-0003C",
+  "201-290981-0002E",
+];
+
 export function normalizeDocumentId(value) {
   return String(value ?? "")
     .toUpperCase()
     .replace(/[^0-9A-Z]/g, "");
+}
+
+export function normalizeBranchName(value) {
+  const normalized = String(value ?? "").trim();
+  return normalized || DEFAULT_BRANCH;
+}
+
+export function getCompanyNameForBranch(branch) {
+  return `Carnes San Martin ${normalizeBranchName(branch)}`;
 }
 
 export const SHORT_DOCUMENT_ID_LENGTH = 5;
@@ -103,11 +136,31 @@ export function getShortDocumentId(value) {
   return normalized.slice(-SHORT_DOCUMENT_ID_LENGTH);
 }
 
-export const collaborators = rawCollaborators.map((collaborator, index) => ({
-  ...collaborator,
-  id: `collaborator-${index + 1}`,
-  normalizedDocumentId: normalizeDocumentId(collaborator.documentId),
-}));
+export const collaborators = rawCollaborators.map((collaborator) => {
+  const normalizedDocumentId = normalizeDocumentId(collaborator.documentId);
+
+  return {
+    ...collaborator,
+    branch: normalizeBranchName(collaborator.branch),
+    companyName: getCompanyNameForBranch(collaborator.branch),
+    id: normalizedDocumentId,
+    normalizedDocumentId,
+  };
+});
+
+export const branches = Array.from(
+  new Set(collaborators.map((collaborator) => collaborator.branch))
+).sort((left, right) => {
+  const leftOrder = BRANCH_ORDER.indexOf(left);
+  const rightOrder = BRANCH_ORDER.indexOf(right);
+
+  if (leftOrder !== -1 || rightOrder !== -1) {
+    return (leftOrder === -1 ? Number.MAX_SAFE_INTEGER : leftOrder) -
+      (rightOrder === -1 ? Number.MAX_SAFE_INTEGER : rightOrder);
+  }
+
+  return left.localeCompare(right);
+});
 
 export const collaboratorMap = Object.fromEntries(
   collaborators.map((collaborator) => [collaborator.id, collaborator])
@@ -117,6 +170,26 @@ export const collaboratorByDocumentId = Object.fromEntries(
   collaborators.map((collaborator) => [
     collaborator.normalizedDocumentId,
     collaborator,
+  ])
+);
+
+function buildLegacyIndexMap(documentIds) {
+  return Object.fromEntries(
+    documentIds.map((documentId, index) => [
+      `collaborator-${index + 1}`,
+      normalizeDocumentId(documentId),
+    ])
+  );
+}
+
+const LEGACY_INDEX_TO_DOCUMENT_ID_BEFORE_DAVID = buildLegacyIndexMap(
+  LEGACY_DOCUMENT_ORDER_BEFORE_DAVID
+);
+
+const LEGACY_INDEX_TO_DOCUMENT_ID_AFTER_DAVID = Object.fromEntries(
+  collaborators.map((collaborator, index) => [
+    `collaborator-${index + 1}`,
+    collaborator.normalizedDocumentId,
   ])
 );
 
@@ -146,4 +219,43 @@ export function getCollaboratorByClockCode(value) {
       ? collaboratorByShortDocumentId[normalized] ?? null
       : null)
   );
+}
+
+function parseReferenceTimestamp(value) {
+  if (!value) {
+    return null;
+  }
+
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+export function resolveCollaboratorId(value, referenceTimestamp) {
+  const rawValue = String(value ?? "").trim();
+  if (!rawValue) {
+    return "";
+  }
+
+  const directMatch = collaboratorByDocumentId[normalizeDocumentId(rawValue)];
+  if (directMatch) {
+    return directMatch.id;
+  }
+
+  const legacyKey = rawValue.toLowerCase();
+  if (!/^collaborator-\d+$/i.test(legacyKey)) {
+    return "";
+  }
+
+  const timestamp = parseReferenceTimestamp(referenceTimestamp);
+  const legacyMap =
+    timestamp != null && timestamp >= LEGACY_EMPLOYEE_ID_CUTOVER_AT
+      ? LEGACY_INDEX_TO_DOCUMENT_ID_AFTER_DAVID
+      : LEGACY_INDEX_TO_DOCUMENT_ID_BEFORE_DAVID;
+
+  return legacyMap[legacyKey] || "";
+}
+
+export function getCollaboratorByEmployeeId(value, referenceTimestamp) {
+  const collaboratorId = resolveCollaboratorId(value, referenceTimestamp);
+  return collaboratorMap[collaboratorId] ?? null;
 }

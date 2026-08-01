@@ -1,10 +1,12 @@
 import ExcelJS from "exceljs";
 import * as XLSX from "xlsx";
-import { normalizeDocumentId } from "../data/collaborators";
+import {
+  getCompanyNameForBranch,
+  normalizeDocumentId,
+} from "../data/collaborators";
 import { formatDateLabel, getWeekEnd } from "./time";
 
 const BRAND = {
-  companyName: "Carnes San Martin Granada",
   accent: "FFE1141B",
   accentSoft: "FFFBE7E8",
   dark: "FF111111",
@@ -18,6 +20,25 @@ const BANK_PAYROLL_PLAN_NUMBER = "AAF6";
 const BANK_PAYMENT_DETAIL_PREFIX = "Viat.alim.y.transp";
 const CONSOLIDATED_REPORT_TITLE =
   "Consolidado Semanal de Pago de Viaticos de transporte y alimento";
+
+function getBranchSlug(value) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+function resolveCompanyName(snapshot, branch) {
+  const resolvedBranch =
+    branch ??
+    snapshot?.summaryRows?.[0]?.collaborator?.branch ??
+    snapshot?.processedRecords?.[0]?.collaborator?.branch ??
+    snapshot?.dailySummaries?.[0]?.collaborator?.branch ??
+    "Granada";
+
+  return getCompanyNameForBranch(resolvedBranch);
+}
 
 function buildSheet(rows, widths) {
   const sheet = XLSX.utils.aoa_to_sheet(rows);
@@ -228,6 +249,7 @@ function applyLetterhead(worksheet, {
   subtitle,
   weekRange,
   documentLabel,
+  companyName,
 }) {
   worksheet.views = [{ showGridLines: false }];
   worksheet.pageSetup = {
@@ -255,7 +277,7 @@ function applyLetterhead(worksheet, {
     });
   }
 
-  setCellText(worksheet.getCell("C1"), BRAND.companyName);
+  setCellText(worksheet.getCell("C1"), companyName);
   styleTitle(worksheet.getCell("C1"), 20);
 
   setCellText(worksheet.getCell("C2"), title);
@@ -350,9 +372,11 @@ function buildSlipRows(collaboratorDays) {
   }));
 }
 
-function buildDailyMarkingSummaryRows(snapshot) {
+function buildDailyMarkingSummaryRows(snapshot, options = {}) {
+  const companyName = resolveCompanyName(snapshot, options.branch);
+
   return [
-    ["CARNES SAN MARTIN GRANADA"],
+    [companyName.toUpperCase()],
     ["Reporte diario de marcacion"],
     ["Fecha", formatDateLabel(snapshot.reportDate)],
     ["Semana legal", formatDateLabel(snapshot.weekStart), "Semana al", formatDateLabel(snapshot.weekEnd)],
@@ -397,9 +421,11 @@ function buildDailyMarkingSummaryRows(snapshot) {
   ];
 }
 
-function buildDailyMarkingRawRows(snapshot) {
+function buildDailyMarkingRawRows(snapshot, options = {}) {
+  const companyName = resolveCompanyName(snapshot, options.branch);
+
   return [
-    ["CARNES SAN MARTIN GRANADA"],
+    [companyName.toUpperCase()],
     ["Marcaciones del dia"],
     ["Fecha", formatDateLabel(snapshot.reportDate)],
     [],
@@ -430,16 +456,16 @@ function buildDailyMarkingRawRows(snapshot) {
   ];
 }
 
-function createWorkbook() {
+function createWorkbook(companyName = getCompanyNameForBranch("Granada")) {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "OpenAI Codex";
-  workbook.company = BRAND.companyName;
+  workbook.company = companyName;
   workbook.created = new Date();
   workbook.modified = new Date();
   return workbook;
 }
 
-function createDetailSheet(workbook, snapshot, logoId) {
+function createDetailSheet(workbook, snapshot, logoId, companyName) {
   const worksheet = workbook.addWorksheet("Registros");
   applyLetterhead(worksheet, {
     logoId,
@@ -447,6 +473,7 @@ function createDetailSheet(workbook, snapshot, logoId) {
     subtitle: "Detalle de tramos y horas diarias registradas",
     weekRange: formatWeekRange(snapshot.weekStart, snapshot.weekEnd),
     documentLabel: "Anexo operativo para soporte de calculo semanal",
+    companyName,
   });
 
   worksheet.columns = [
@@ -504,8 +531,9 @@ function createDetailSheet(workbook, snapshot, logoId) {
   worksheet.views = [{ state: "frozen", ySplit: 7, showGridLines: false }];
 }
 
-async function createConsolidatedWorkbook(snapshot) {
-  const workbook = createWorkbook();
+async function createConsolidatedWorkbook(snapshot, options = {}) {
+  const companyName = resolveCompanyName(snapshot, options.branch);
+  const workbook = createWorkbook(companyName);
   const logoId = await loadWorkbookLogo(workbook);
   const worksheet = workbook.addWorksheet("Consolidado");
 
@@ -516,6 +544,7 @@ async function createConsolidatedWorkbook(snapshot) {
     weekRange: formatWeekRange(snapshot.weekStart, snapshot.weekEnd),
     documentLabel:
       "Las celdas amarillas se pueden ajustar manualmente. El pago se recalcula automaticamente en Excel.",
+    companyName,
   });
 
   worksheet.columns = [
@@ -610,7 +639,7 @@ async function createConsolidatedWorkbook(snapshot) {
   );
   styleMuted(worksheet.getCell(`A${totalRowNumber + 2}`));
 
-  createDetailSheet(workbook, snapshot, logoId);
+  createDetailSheet(workbook, snapshot, logoId, companyName);
 
   return workbook;
 }
@@ -694,7 +723,15 @@ function addSlipFooter(worksheet, startRow) {
   };
 }
 
-function createSlipWorksheet(workbook, snapshot, summaryRow, collaboratorDays, logoId, sheetName) {
+function createSlipWorksheet(
+  workbook,
+  snapshot,
+  summaryRow,
+  collaboratorDays,
+  logoId,
+  sheetName,
+  companyName
+) {
   const worksheet = workbook.addWorksheet(sheetName);
   worksheet.columns = [
     { key: "a", width: 16 },
@@ -731,7 +768,7 @@ function createSlipWorksheet(workbook, snapshot, summaryRow, collaboratorDays, l
     });
   }
 
-  setCellText(worksheet.getCell("B1"), BRAND.companyName);
+  setCellText(worksheet.getCell("B1"), companyName);
   styleTitle(worksheet.getCell("B1"), 18);
   setCellText(worksheet.getCell("B2"), "Colilla de Pago de Horas Extras");
   worksheet.getCell("B2").font = {
@@ -752,8 +789,13 @@ function createSlipWorksheet(workbook, snapshot, summaryRow, collaboratorDays, l
   styleHourColumn(worksheet, "D");
 }
 
-async function createSlipWorkbook(snapshot, employeeId, includeAllSheets = false) {
-  const workbook = createWorkbook();
+async function createSlipWorkbook(
+  snapshot,
+  employeeId,
+  includeAllSheets = false,
+  options = {}
+) {
+  const workbook = createWorkbook(resolveCompanyName(snapshot, options.branch));
   const logoId = await loadWorkbookLogo(workbook);
 
   const summaryRows = includeAllSheets
@@ -764,6 +806,9 @@ async function createSlipWorkbook(snapshot, employeeId, includeAllSheets = false
     const collaboratorDays = snapshot.dailySummaries.filter(
       (day) => day.employeeId === summaryRow.collaborator.id
     );
+    const companyName =
+      summaryRow.collaborator.companyName ??
+      resolveCompanyName(snapshot, options.branch);
     const sheetName = includeAllSheets
       ? summaryRow.collaborator.name.slice(0, 31)
       : "Colilla";
@@ -773,37 +818,43 @@ async function createSlipWorkbook(snapshot, employeeId, includeAllSheets = false
       summaryRow,
       collaboratorDays,
       logoId,
-      sheetName
+      sheetName,
+      companyName
     );
   }
 
   return workbook;
 }
 
-export async function exportConsolidatedWorkbook(snapshot) {
-  const workbook = await createConsolidatedWorkbook(snapshot);
+export async function exportConsolidatedWorkbook(snapshot, options = {}) {
+  const workbook = await createConsolidatedWorkbook(snapshot, options);
+  const branchSlug = options.branch ? `-${getBranchSlug(options.branch)}` : "";
   await saveWorkbook(
     workbook,
-    `consolidado-horas-extras-${snapshot.weekStart}-${getWeekEnd(snapshot.weekStart)}.xlsx`
+    `consolidado-semanal${branchSlug}-${snapshot.weekStart}-${getWeekEnd(snapshot.weekStart)}.xlsx`
   );
 }
 
-export function exportDailyMarkingWorkbook(snapshot) {
+export function exportDailyMarkingWorkbook(snapshot, options = {}) {
   const workbook = XLSX.utils.book_new();
+  const branchSlug = options.branch ? `-${getBranchSlug(options.branch)}` : "";
 
   XLSX.utils.book_append_sheet(
     workbook,
-    buildSheet(buildDailyMarkingSummaryRows(snapshot), [34, 16, 10, 34, 16, 16, 18, 16, 18, 18]),
+    buildSheet(buildDailyMarkingSummaryRows(snapshot, options), [34, 16, 10, 34, 16, 16, 18, 16, 18, 18]),
     "Resumen dia"
   );
 
   XLSX.utils.book_append_sheet(
     workbook,
-    buildSheet(buildDailyMarkingRawRows(snapshot), [34, 16, 12, 12, 14, 16, 16, 16, 12, 16]),
+    buildSheet(buildDailyMarkingRawRows(snapshot, options), [34, 16, 12, 12, 14, 16, 16, 16, 12, 16]),
     "Marcaciones dia"
   );
 
-  XLSX.writeFile(workbook, `reporte-marcaciones-${snapshot.reportDate}.xlsx`);
+  XLSX.writeFile(
+    workbook,
+    `reporte-marcaciones${branchSlug}-${snapshot.reportDate}.xlsx`
+  );
 }
 
 export async function exportIndividualSlipWorkbook(snapshot, employeeId) {
@@ -815,7 +866,9 @@ export async function exportIndividualSlipWorkbook(snapshot, employeeId) {
     return;
   }
 
-  const workbook = await createSlipWorkbook(snapshot, employeeId, false);
+  const workbook = await createSlipWorkbook(snapshot, employeeId, false, {
+    branch: summaryRow.collaborator.branch,
+  });
   const safeName = summaryRow.collaborator.name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
@@ -824,11 +877,12 @@ export async function exportIndividualSlipWorkbook(snapshot, employeeId) {
   await saveWorkbook(workbook, `colilla-${safeName}-${snapshot.weekStart}.xlsx`);
 }
 
-export async function exportAllSlipsWorkbook(snapshot) {
-  const workbook = await createSlipWorkbook(snapshot, null, true);
+export async function exportAllSlipsWorkbook(snapshot, options = {}) {
+  const workbook = await createSlipWorkbook(snapshot, null, true, options);
+  const branchSlug = options.branch ? `-${getBranchSlug(options.branch)}` : "";
   await saveWorkbook(
     workbook,
-    `colillas-horas-extras-${snapshot.weekStart}-${getWeekEnd(snapshot.weekStart)}.xlsx`
+    `colillas-semanales${branchSlug}-${snapshot.weekStart}-${getWeekEnd(snapshot.weekStart)}.xlsx`
   );
 }
 

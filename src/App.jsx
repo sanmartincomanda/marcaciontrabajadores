@@ -2,8 +2,11 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { BrowserMultiFormatReader } from "@zxing/browser";
 import { BarcodeFormat, DecodeHintType, NotFoundException } from "@zxing/library";
 import {
+  branches,
   collaborators,
+  DEFAULT_BRANCH,
   getCollaboratorByClockCode,
+  getCompanyNameForBranch,
   normalizeDocumentId,
 } from "./data/collaborators";
 import {
@@ -106,6 +109,126 @@ function buildDefaultSettings(date = new Date()) {
 
 function roundHours(value) {
   return Number(Number(value || 0).toFixed(2));
+}
+
+function matchesBranch(collaborator, branch) {
+  return !branch || collaborator?.branch === branch;
+}
+
+function buildScopedPayrollSnapshot(snapshot, branch) {
+  if (!branch) {
+    return snapshot;
+  }
+
+  const summaryRows = snapshot.summaryRows.filter((row) =>
+    matchesBranch(row.collaborator, branch)
+  );
+  const dailySummaries = snapshot.dailySummaries.filter((summary) =>
+    matchesBranch(summary.collaborator, branch)
+  );
+  const processedRecords = snapshot.processedRecords.filter((record) =>
+    matchesBranch(record.collaborator, branch)
+  );
+  const activeClockCount = processedRecords.filter(
+    (record) => !record.isDirectOvertime && !record.checkOut
+  ).length;
+  const workersWithOvertime = summaryRows.filter(
+    (row) => Number(row.overtimeHours || 0) > 0
+  ).length;
+
+  return {
+    ...snapshot,
+    summaryRows,
+    dailySummaries,
+    processedRecords,
+    activeClockCount,
+    workersWithOvertime,
+    totals: {
+      ...snapshot.totals,
+      workedHours: roundHours(
+        summaryRows.reduce(
+          (total, row) => total + Number(row.totalWorkedHours || 0),
+          0
+        )
+      ),
+      ordinaryHours: roundHours(
+        summaryRows.reduce(
+          (total, row) => total + Number(row.ordinaryHours || 0),
+          0
+        )
+      ),
+      overtimeHours: roundHours(
+        summaryRows.reduce(
+          (total, row) => total + Number(row.overtimeHours || 0),
+          0
+        )
+      ),
+      totalPay: roundHours(
+        summaryRows.reduce((total, row) => total + Number(row.totalPay || 0), 0)
+      ),
+      activeClockCount,
+      workersWithOvertime,
+      activeRecordsLabel: formatCompactHours(
+        processedRecords
+          .filter((record) => !record.isDirectOvertime && !record.checkOut)
+          .reduce((total, record) => total + Number(record.workedHours || 0), 0)
+      ),
+    },
+  };
+}
+
+function buildScopedDailySnapshot(snapshot, branch, employeeId = "all") {
+  const summaryRows = snapshot.summaryRows.filter((row) => {
+    if (!matchesBranch(row.collaborator, branch)) {
+      return false;
+    }
+
+    return employeeId === "all" || row.employeeId === employeeId;
+  });
+  const processedRecords = snapshot.processedRecords.filter((record) => {
+    if (!matchesBranch(record.collaborator, branch)) {
+      return false;
+    }
+
+    return employeeId === "all" || record.employeeId === employeeId;
+  });
+
+  return {
+    ...snapshot,
+    summaryRows,
+    processedRecords,
+    totals: {
+      employeeCount: summaryRows.length,
+      recordCount: processedRecords.length,
+      openCount: processedRecords.filter(
+        (record) => !record.isDirectOvertime && !record.checkOut
+      ).length,
+      completedCount: processedRecords.filter(
+        (record) => record.isDirectOvertime || record.checkOut
+      ).length,
+      workedHours: roundHours(
+        summaryRows.reduce((total, row) => total + Number(row.totalWorkedHours || 0), 0)
+      ),
+      ordinaryHours: roundHours(
+        summaryRows.reduce(
+          (total, row) => total + Number(row.weeklyOrdinaryHours || 0),
+          0
+        )
+      ),
+      overtimeHours: roundHours(
+        summaryRows.reduce(
+          (total, row) => total + Number(row.weeklyOvertimeHours || 0),
+          0
+        )
+      ),
+      totalPay: roundHours(
+        summaryRows.reduce(
+          (total, row) => total + Number(row.weeklyOvertimePay || 0),
+          0
+        )
+      ),
+    },
+  };
 }
 
 function getWeeklyCellKey(employeeId, date) {
@@ -411,6 +534,9 @@ function App() {
   const [selectedSlipEmployeeId, setSelectedSlipEmployeeId] = useState(
     collaborators[0]?.id ?? ""
   );
+  const [selectedBranch, setSelectedBranch] = useState(
+    branches[0] ?? DEFAULT_BRANCH
+  );
   const [selectedReportDate, setSelectedReportDate] = useState(() =>
     toInputDate(new Date())
   );
@@ -561,6 +687,7 @@ function App() {
   }, [defaultSettings]);
 
   const payroll = buildPayrollSnapshot(collaborators, records, settings);
+  const scopedPayroll = buildScopedPayrollSnapshot(payroll, selectedBranch);
   const currentWeekEnd = getWeekEnd(settings.weekStart);
   const dailyMarkingSnapshot = buildDailyMarkingSnapshot(
     collaborators,
@@ -570,6 +697,22 @@ function App() {
   );
   const weekDates = buildWeekDates(settings.weekStart);
   const weeklyRecordsByCell = buildWeeklyRecordMap(records, settings.weekStart);
+  const branchCollaborators = collaborators.filter(
+    (collaborator) => collaborator.branch === selectedBranch
+  );
+  const selectedBranchCompanyName = getCompanyNameForBranch(selectedBranch);
+  const effectiveSelectedReportEmployeeId =
+    selectedReportEmployeeId === "all" ||
+    branchCollaborators.some(
+      (collaborator) => collaborator.id === selectedReportEmployeeId
+    )
+      ? selectedReportEmployeeId
+      : "all";
+  const effectiveSelectedSlipEmployeeId = branchCollaborators.some(
+    (collaborator) => collaborator.id === selectedSlipEmployeeId
+  )
+    ? selectedSlipEmployeeId
+    : branchCollaborators[0]?.id ?? "";
   const weeklyHoursLimit = Number(
     settings.standardHoursPerWeek ?? payroll.totals.weeklyHoursLimit ?? 48
   );
@@ -605,71 +748,40 @@ function App() {
     };
   });
   const selectedReportCollaborator =
-    selectedReportEmployeeId === "all"
+    effectiveSelectedReportEmployeeId === "all"
       ? null
-      : collaborators.find(
-          (collaborator) => collaborator.id === selectedReportEmployeeId
+      : branchCollaborators.find(
+          (collaborator) => collaborator.id === effectiveSelectedReportEmployeeId
         ) ?? null;
-  const filteredDailySummaryRows = dailyMarkingSnapshot.summaryRows.filter((row) =>
-    selectedReportEmployeeId === "all" || row.employeeId === selectedReportEmployeeId
+  const dailyReportSnapshot = buildScopedDailySnapshot(
+    dailyMarkingSnapshot,
+    selectedBranch,
+    effectiveSelectedReportEmployeeId
   );
-  const filteredDailyRecords = dailyMarkingSnapshot.processedRecords.filter(
-    (record) =>
-      selectedReportEmployeeId === "all" ||
-      record.employeeId === selectedReportEmployeeId
-  );
-  const dailyReportSnapshot = {
-    ...dailyMarkingSnapshot,
-    summaryRows: filteredDailySummaryRows,
-    processedRecords: filteredDailyRecords,
-    totals: {
-      employeeCount: filteredDailySummaryRows.length,
-      recordCount: filteredDailyRecords.length,
-      openCount: filteredDailyRecords.filter(
-        (record) => !record.isDirectOvertime && !record.checkOut
-      ).length,
-      completedCount: filteredDailyRecords.filter(
-        (record) => record.isDirectOvertime || record.checkOut
-      ).length,
-      workedHours: filteredDailySummaryRows.reduce(
-        (total, row) => total + row.totalWorkedHours,
-        0
-      ),
-      ordinaryHours: filteredDailySummaryRows.reduce(
-        (total, row) => total + row.weeklyOrdinaryHours,
-        0
-      ),
-      overtimeHours: filteredDailySummaryRows.reduce(
-        (total, row) => total + row.weeklyOvertimeHours,
-        0
-      ),
-      totalPay: filteredDailySummaryRows.reduce(
-        (total, row) => total + row.weeklyOvertimePay,
-        0
-      ),
-    },
-  };
-  const visibleSummaryRows = payroll.summaryRows.filter(
+  const visibleSummaryRows = scopedPayroll.summaryRows.filter(
     (row) => row.recordCount > 0 || row.overtimeHours > 0
   );
   const currentClockDate = toInputDate(now);
   const activeRecords = buildOpenRecordMap(records, currentClockDate);
-  const topWorkers = [...payroll.summaryRows]
+  const activeBranchRecordCount = Object.values(activeRecords).filter((record) =>
+    branchCollaborators.some((collaborator) => collaborator.id === record.employeeId)
+  ).length;
+  const topWorkers = [...scopedPayroll.summaryRows]
     .sort((left, right) => right.totalPay - left.totalPay)
     .slice(0, 5);
   const selectedSlipSummary =
-    payroll.summaryRows.find(
-      (row) => row.collaborator.id === selectedSlipEmployeeId
-    ) ?? payroll.summaryRows[0];
-  const selectedSlipDays = payroll.dailySummaries.filter(
+    scopedPayroll.summaryRows.find(
+      (row) => row.collaborator.id === effectiveSelectedSlipEmployeeId
+    ) ?? scopedPayroll.summaryRows[0];
+  const selectedSlipDays = scopedPayroll.dailySummaries.filter(
     (day) => day.employeeId === selectedSlipSummary?.collaborator.id
   );
-  const bankPaymentRows = payroll.summaryRows.filter(
+  const bankPaymentRows = scopedPayroll.summaryRows.filter(
     (row) => Number(row.totalPay || 0) > 0
   );
   const bankPaymentDetail = `${BANK_PAYMENT_DETAIL_PREFIX} ${formatCompactDayMonth(
-    payroll.weekStart
-  )} al ${formatCompactDayMonth(payroll.weekEnd)}`;
+    scopedPayroll.weekStart
+  )} al ${formatCompactDayMonth(scopedPayroll.weekEnd)}`;
   const bankPaymentTotal = bankPaymentRows.reduce(
     (total, row) => total + Number(row.totalPay || 0),
     0
@@ -1285,7 +1397,9 @@ function App() {
 
   async function exportConsolidated() {
     try {
-      await exportConsolidatedWorkbook(payroll);
+      await exportConsolidatedWorkbook(scopedPayroll, {
+        branch: selectedBranch,
+      });
       showNotice("success", "Consolidado exportado a Excel.");
     } catch (error) {
       showNotice("error", error?.message || "No pude exportar el consolidado.");
@@ -1293,7 +1407,9 @@ function App() {
   }
 
   function exportDailyReport() {
-    exportDailyMarkingWorkbook(dailyReportSnapshot);
+    exportDailyMarkingWorkbook(dailyReportSnapshot, {
+      branch: selectedBranch,
+    });
     showNotice("success", "Reporte diario de marcaciones exportado.");
   }
 
@@ -1305,7 +1421,7 @@ function App() {
 
     try {
       await exportIndividualSlipWorkbook(
-        payroll,
+        scopedPayroll,
         selectedSlipSummary.collaborator.id
       );
       showNotice("success", "Colilla individual exportada.");
@@ -1316,7 +1432,9 @@ function App() {
 
   async function exportSlipPack() {
     try {
-      await exportAllSlipsWorkbook(payroll);
+      await exportAllSlipsWorkbook(scopedPayroll, {
+        branch: selectedBranch,
+      });
       showNotice("success", "Paquete completo de colillas exportado.");
     } catch (error) {
       showNotice(
@@ -1328,7 +1446,7 @@ function App() {
 
   function exportBankFile() {
     try {
-      exportBankPaymentFile(payroll, bankPaymentForm);
+      exportBankPaymentFile(scopedPayroll, bankPaymentForm);
       showNotice("success", "Archivo del banco exportado.");
     } catch (error) {
       showNotice(
@@ -1345,7 +1463,7 @@ function App() {
         <div className="ambient ambient-two" />
 
         <section className="auth-card">
-          <span className="eyebrow">CARNES SAN MARTIN GRANADA</span>
+          <span className="eyebrow">CARNES SAN MARTIN</span>
           <h1>Ingresa al sistema de marcacion y horas extras</h1>
           <p>
             Admin entra a toda la aplicacion. Marcar solo puede usar la
@@ -1444,7 +1562,7 @@ function App() {
         <>
           <header className="hero-panel">
             <div className="hero-copy">
-              <span className="eyebrow">CARNES SAN MARTIN GRANADA</span>
+              <span className="eyebrow">{selectedBranchCompanyName.toUpperCase()}</span>
               <h1>Control semanal de horas extras listo para Netlify</h1>
               <p>
                 Registra entradas y salidas, marca asistencia por trabajador y
@@ -1467,30 +1585,30 @@ function App() {
                   {formatDateLabel(currentWeekEnd)}
                 </strong>
                 <span>
-                  {payroll.processedRecords.length} registro(s) cargado(s) esta
-                  semana
+                  {scopedPayroll.processedRecords.length} registro(s) de{" "}
+                  {selectedBranch} cargado(s) esta semana
                 </span>
               </div>
 
               <div className="hero-grid">
                 <StatCard
                   label="Horas extra"
-                  value={formatHours(payroll.totals.overtimeHours)}
+                  value={formatHours(scopedPayroll.totals.overtimeHours)}
                   caption="Calculadas segun el acumulado semanal configurado"
                 />
                 <StatCard
                   label="Pago estimado"
-                  value={formatCurrency(payroll.totals.totalPay)}
+                  value={formatCurrency(scopedPayroll.totals.totalPay)}
                   caption="Con tarifa de hora extra aplicada automaticamente"
                 />
                 <StatCard
                   label="Trabajadores con extra"
-                  value={String(payroll.workersWithOvertime)}
+                  value={String(scopedPayroll.workersWithOvertime)}
                   caption="Solo quienes superaron la jornada ordinaria semanal"
                 />
                 <StatCard
                   label="Marcaciones abiertas"
-                  value={String(Object.keys(activeRecords).length)}
+                  value={String(activeBranchRecordCount)}
                   caption="Entradas pendientes de salida solo de hoy"
                 />
               </div>
@@ -1535,6 +1653,20 @@ function App() {
                     handleOvertimeMultiplierChange(event.target.value)
                   }
                 />
+              </label>
+
+              <label>
+                Sucursal activa
+                <select
+                  value={selectedBranch}
+                  onChange={(event) => setSelectedBranch(event.target.value)}
+                >
+                  {branches.map((branch) => (
+                    <option key={branch} value={branch}>
+                      {getCompanyNameForBranch(branch)}
+                    </option>
+                  ))}
+                </select>
               </label>
             </div>
 
@@ -1733,6 +1865,7 @@ function App() {
                     <span className="panel-kicker">Vista central</span>
                     <h2>Resumen semanal por colaborador</h2>
                   </div>
+                  <span className="panel-meta">{selectedBranchCompanyName}</span>
                   <button
                     type="button"
                     className="ghost-button"
@@ -1757,7 +1890,7 @@ function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {payroll.summaryRows.map((row) => (
+                      {scopedPayroll.summaryRows.map((row) => (
                         <tr key={row.collaborator.id}>
                           <td>{row.collaborator.name}</td>
                           <td>{row.collaborator.documentId}</td>
@@ -1785,8 +1918,8 @@ function App() {
                 <div className="leaderboard">
                   {topWorkers.map((row, index) => {
                     const width =
-                      payroll.totals.totalPay > 0
-                        ? Math.max((row.totalPay / payroll.totals.totalPay) * 100, 8)
+                      scopedPayroll.totals.totalPay > 0
+                        ? Math.max((row.totalPay / scopedPayroll.totals.totalPay) * 100, 8)
                         : 8;
 
                     return (
@@ -1830,7 +1963,7 @@ function App() {
                     <span>Registros cerrados</span>
                     <strong>
                       {
-                        payroll.processedRecords.filter(
+                        scopedPayroll.processedRecords.filter(
                           (record) => record.isDirectOvertime || record.checkOut
                         ).length
                       }
@@ -1840,7 +1973,7 @@ function App() {
                     <span>Registros pendientes</span>
                     <strong>
                       {
-                        payroll.processedRecords.filter(
+                        scopedPayroll.processedRecords.filter(
                           (record) => !record.isDirectOvertime && !record.checkOut
                         ).length
                       }
@@ -1848,11 +1981,11 @@ function App() {
                   </div>
                   <div className="metric-line">
                     <span>Horas trabajadas</span>
-                    <strong>{formatHours(payroll.totals.workedHours)}</strong>
+                    <strong>{formatHours(scopedPayroll.totals.workedHours)}</strong>
                   </div>
                   <div className="metric-line">
                     <span>Horas ordinarias</span>
-                    <strong>{formatHours(payroll.totals.ordinaryHours)}</strong>
+                    <strong>{formatHours(scopedPayroll.totals.ordinaryHours)}</strong>
                   </div>
                   <div className="metric-line">
                     <span>Colaboradores con actividad</span>
@@ -2258,9 +2391,23 @@ function App() {
                     <span className="panel-kicker">Reporte diario</span>
                     <h2>Marcaciones y exportaciones</h2>
                   </div>
+                  <span className="panel-meta">{selectedBranchCompanyName}</span>
                 </div>
 
                 <div className="form-grid">
+                  <label>
+                    Sucursal
+                    <select
+                      value={selectedBranch}
+                      onChange={(event) => setSelectedBranch(event.target.value)}
+                    >
+                      {branches.map((branch) => (
+                        <option key={branch} value={branch}>
+                          {getCompanyNameForBranch(branch)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                   <label>
                     Fecha de marcacion
                     <input
@@ -2272,13 +2419,13 @@ function App() {
                   <label>
                     Colaborador en reporte
                     <select
-                      value={selectedReportEmployeeId}
+                      value={effectiveSelectedReportEmployeeId}
                       onChange={(event) =>
                         setSelectedReportEmployeeId(event.target.value)
                       }
                     >
                       <option value="all">Todos los colaboradores</option>
-                      {collaborators.map((collaborator) => (
+                      {branchCollaborators.map((collaborator) => (
                         <option key={collaborator.id} value={collaborator.id}>
                           {collaborator.name}
                         </option>
@@ -2300,14 +2447,14 @@ function App() {
                     className="ghost-button"
                     onClick={exportConsolidated}
                   >
-                    Descargar consolidado semanal
+                    Descargar consolidado semanal de {selectedBranch}
                   </button>
                   <button
                     type="button"
                     className="ghost-button"
                     onClick={exportSlipPack}
                   >
-                    Descargar paquete de colillas
+                    Descargar paquete de colillas de {selectedBranch}
                   </button>
                 </div>
 
@@ -2317,7 +2464,9 @@ function App() {
                       <span className="panel-kicker">Archivo banco</span>
                       <h2>Generar envio PRN para BAC</h2>
                     </div>
-                    <span className="panel-meta">Plan fijo AAF6</span>
+                    <span className="panel-meta">
+                      Plan fijo AAF6 | {selectedBranchCompanyName}
+                    </span>
                   </div>
 
                   <div className="form-grid">
@@ -2366,12 +2515,12 @@ function App() {
                     <StatCard
                       label="Registros"
                       value={String(bankPaymentRows.length)}
-                      caption="Colaboradores incluidos en el archivo"
+                      caption={`Colaboradores incluidos en ${selectedBranch}`}
                     />
                     <StatCard
                       label="Total envio"
                       value={formatCurrency(bankPaymentTotal)}
-                      caption="Total acumulado del archivo PRN"
+                      caption={`Total acumulado del archivo PRN de ${selectedBranch}`}
                     />
                   </div>
 
@@ -2387,10 +2536,10 @@ function App() {
                 <label className="full-width">
                   Colaborador para colilla individual
                   <select
-                    value={selectedSlipEmployeeId}
+                    value={effectiveSelectedSlipEmployeeId}
                     onChange={(event) => setSelectedSlipEmployeeId(event.target.value)}
                   >
-                    {collaborators.map((collaborator) => (
+                    {branchCollaborators.map((collaborator) => (
                       <option key={collaborator.id} value={collaborator.id}>
                         {collaborator.name}
                       </option>
@@ -2413,6 +2562,7 @@ function App() {
                     {selectedReportCollaborator
                       ? `${formatDateLabel(selectedReportDate)} - ${selectedReportCollaborator.name}`
                       : formatDateLabel(selectedReportDate)}{" "}
+                    | {selectedBranchCompanyName}{" "}
                     | Semana del {formatDateLabel(dailyReportSnapshot.weekStart)} al{" "}
                     {formatDateLabel(dailyReportSnapshot.weekEnd)}
                   </span>
@@ -2557,6 +2707,9 @@ function App() {
                     <span className="panel-kicker">Vista previa</span>
                     <h2>Colilla de {selectedSlipSummary?.collaborator.name}</h2>
                   </div>
+                  <span className="panel-meta">
+                    {selectedSlipSummary?.collaborator.companyName}
+                  </span>
                 </div>
 
                 {selectedSlipSummary ? (
