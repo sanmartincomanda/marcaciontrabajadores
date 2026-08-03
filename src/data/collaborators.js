@@ -26,6 +26,12 @@ const rawCollaborators = [
     branch: "Nindiri",
   },
   {
+    name: "MICHAEL ERNESTO TORRES SILVA",
+    salary: 11350.08,
+    documentId: "201-220801-1003F",
+    branch: "Nindiri",
+  },
+  {
     name: "Harvey Joffrey Mora Morales",
     salary: 11350.08,
     documentId: "201-180401-1000S",
