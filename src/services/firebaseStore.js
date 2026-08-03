@@ -47,7 +47,10 @@ function normalizeRecord(record, docId = record?.id) {
   const referenceTimestamp =
     record?.createdAt || record?.updatedAt || record?.date || "";
   const resolvedEmployeeId = resolveCollaboratorId(
-    record?.employeeDocumentId || record?.employeeId || "",
+    record?.legacyEmployeeId ||
+      record?.employeeDocumentId ||
+      record?.employeeId ||
+      "",
     referenceTimestamp
   );
   const employeeDocumentId = resolvedEmployeeId
@@ -58,6 +61,7 @@ function normalizeRecord(record, docId = record?.id) {
     id: docId,
     employeeId: resolvedEmployeeId || record?.employeeId || "",
     employeeDocumentId,
+    legacyEmployeeId: record?.legacyEmployeeId || "",
     date: record?.date || "",
     checkIn: record?.checkIn || "",
     checkOut: record?.checkOut || "",

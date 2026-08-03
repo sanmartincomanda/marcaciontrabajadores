@@ -90,7 +90,6 @@ const rawCollaborators = [
 export const DEFAULT_BRANCH = "Granada";
 
 const BRANCH_ORDER = [DEFAULT_BRANCH, "Nindiri"];
-const LEGACY_EMPLOYEE_ID_CUTOVER_AT = Date.parse("2026-07-31T07:52:14-06:00");
 const LEGACY_DOCUMENT_ORDER_BEFORE_DAVID = [
   "201-191195-0002U",
   "201-211069-0003K",
@@ -221,16 +220,7 @@ export function getCollaboratorByClockCode(value) {
   );
 }
 
-function parseReferenceTimestamp(value) {
-  if (!value) {
-    return null;
-  }
-
-  const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) ? timestamp : null;
-}
-
-export function resolveCollaboratorId(value, referenceTimestamp) {
+export function resolveCollaboratorId(value) {
   const rawValue = String(value ?? "").trim();
   if (!rawValue) {
     return "";
@@ -246,11 +236,10 @@ export function resolveCollaboratorId(value, referenceTimestamp) {
     return "";
   }
 
-  const timestamp = parseReferenceTimestamp(referenceTimestamp);
   const legacyMap =
-    timestamp != null && timestamp >= LEGACY_EMPLOYEE_ID_CUTOVER_AT
-      ? LEGACY_INDEX_TO_DOCUMENT_ID_AFTER_DAVID
-      : LEGACY_INDEX_TO_DOCUMENT_ID_BEFORE_DAVID;
+    LEGACY_INDEX_TO_DOCUMENT_ID_BEFORE_DAVID[legacyKey]
+      ? LEGACY_INDEX_TO_DOCUMENT_ID_BEFORE_DAVID
+      : LEGACY_INDEX_TO_DOCUMENT_ID_AFTER_DAVID;
 
   return legacyMap[legacyKey] || "";
 }
