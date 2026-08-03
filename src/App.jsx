@@ -111,6 +111,10 @@ function roundHours(value) {
   return Number(Number(value || 0).toFixed(2));
 }
 
+function getBranchCollaborators(branch) {
+  return collaborators.filter((collaborator) => collaborator.branch === branch);
+}
+
 function matchesBranch(collaborator, branch) {
   return !branch || collaborator?.branch === branch;
 }
@@ -697,9 +701,7 @@ function App() {
   );
   const weekDates = buildWeekDates(settings.weekStart);
   const weeklyRecordsByCell = buildWeeklyRecordMap(records, settings.weekStart);
-  const branchCollaborators = collaborators.filter(
-    (collaborator) => collaborator.branch === selectedBranch
-  );
+  const branchCollaborators = getBranchCollaborators(selectedBranch);
   const selectedBranchCompanyName = getCompanyNameForBranch(selectedBranch);
   const effectiveSelectedReportEmployeeId =
     selectedReportEmployeeId === "all" ||
@@ -713,10 +715,15 @@ function App() {
   )
     ? selectedSlipEmployeeId
     : branchCollaborators[0]?.id ?? "";
+  const effectiveManualEmployeeId = branchCollaborators.some(
+    (collaborator) => collaborator.id === manualForm.employeeId
+  )
+    ? manualForm.employeeId
+    : branchCollaborators[0]?.id ?? "";
   const weeklyHoursLimit = Number(
     settings.standardHoursPerWeek ?? payroll.totals.weeklyHoursLimit ?? 48
   );
-  const weeklyMatrixRows = collaborators.map((collaborator) => {
+  const weeklyMatrixRows = branchCollaborators.map((collaborator) => {
     let accumulatedWorkedHours = 0;
 
     return {
@@ -822,6 +829,22 @@ function App() {
       );
     }
     setSelectedTab(tabId);
+  }
+
+  function handleBranchChange(nextBranch) {
+    const nextBranchCollaborators = getBranchCollaborators(nextBranch);
+    const nextEmployeeId = nextBranchCollaborators[0]?.id ?? "";
+
+    setSelectedBranch(nextBranch);
+    setSelectedWeeklyInfo(null);
+    setManualForm((current) => ({
+      ...current,
+      employeeId: nextBranchCollaborators.some(
+        (collaborator) => collaborator.id === current.employeeId
+      )
+        ? current.employeeId
+        : nextEmployeeId,
+    }));
   }
 
   async function handleWeekStartChange(nextWeekStart) {
@@ -996,7 +1019,7 @@ function App() {
       existingRecord && !isDirectOvertimeRecord(existingRecord);
     const payload = {
       id: reuseRecordId ? editingRecordId : crypto.randomUUID(),
-      employeeId: manualForm.employeeId,
+      employeeId: effectiveManualEmployeeId,
       date: manualForm.date,
       checkIn: manualForm.checkIn,
       checkOut: manualForm.checkOut,
@@ -1021,7 +1044,7 @@ function App() {
         : "Registro manual guardado."
     );
     setEditingRecordId(null);
-    setManualForm(createManualForm(settings.weekStart, manualForm.employeeId));
+    setManualForm(createManualForm(settings.weekStart, effectiveManualEmployeeId));
   }
 
   async function handleManualOvertimeSubmit() {
@@ -1055,7 +1078,7 @@ function App() {
       existingRecord && isDirectOvertimeRecord(existingRecord);
     const payload = {
       id: reuseRecordId ? editingRecordId : crypto.randomUUID(),
-      employeeId: manualForm.employeeId,
+      employeeId: effectiveManualEmployeeId,
       date: manualForm.date,
       checkIn: "",
       checkOut: "",
@@ -1080,7 +1103,7 @@ function App() {
         : "Horas extras directas guardadas."
     );
     setEditingRecordId(null);
-    setManualForm(createManualForm(settings.weekStart, manualForm.employeeId));
+    setManualForm(createManualForm(settings.weekStart, effectiveManualEmployeeId));
   }
 
   function handleEditRecord(record) {
@@ -1659,7 +1682,7 @@ function App() {
                 Sucursal activa
                 <select
                   value={selectedBranch}
-                  onChange={(event) => setSelectedBranch(event.target.value)}
+                  onChange={(event) => handleBranchChange(event.target.value)}
                 >
                   {branches.map((branch) => (
                     <option key={branch} value={branch}>
@@ -2005,6 +2028,7 @@ function App() {
                     <h2>Cuadro manual por colaborador</h2>
                   </div>
                   <span className="panel-meta">
+                    {selectedBranchCompanyName} |{" "}
                     {formatDateLabel(settings.weekStart)} al{" "}
                     {formatDateLabel(currentWeekEnd)}
                   </span>
@@ -2150,7 +2174,7 @@ function App() {
                   <label>
                     Colaborador
                     <select
-                      value={manualForm.employeeId}
+                      value={effectiveManualEmployeeId}
                       disabled={!canSyncData}
                       onChange={(event) =>
                         setManualForm((current) => ({
@@ -2159,7 +2183,7 @@ function App() {
                         }))
                       }
                     >
-                      {collaborators.map((collaborator) => (
+                      {branchCollaborators.map((collaborator) => (
                         <option key={collaborator.id} value={collaborator.id}>
                           {collaborator.name}
                         </option>
@@ -2307,6 +2331,7 @@ function App() {
                     <h2>Registros cargados</h2>
                   </div>
                   <span className="panel-meta">
+                    {selectedBranchCompanyName} |{" "}
                     {formatDateLabel(settings.weekStart)} al{" "}
                     {formatDateLabel(currentWeekEnd)}
                   </span>
@@ -2329,7 +2354,7 @@ function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {payroll.processedRecords.map((record) => (
+                      {scopedPayroll.processedRecords.map((record) => (
                         <tr key={record.id}>
                           <td>
                             {formatDateLabel(record.date)}
@@ -2376,6 +2401,15 @@ function App() {
                           </td>
                         </tr>
                       ))}
+                      {scopedPayroll.processedRecords.length === 0 ? (
+                        <tr>
+                          <td colSpan="10">
+                            <span className="empty-state">
+                              No hay registros cargados para {selectedBranchCompanyName} en la semana activa.
+                            </span>
+                          </td>
+                        </tr>
+                      ) : null}
                     </tbody>
                   </table>
                 </div>
@@ -2399,7 +2433,7 @@ function App() {
                     Sucursal
                     <select
                       value={selectedBranch}
-                      onChange={(event) => setSelectedBranch(event.target.value)}
+                      onChange={(event) => handleBranchChange(event.target.value)}
                     >
                       {branches.map((branch) => (
                         <option key={branch} value={branch}>
