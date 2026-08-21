@@ -91,11 +91,41 @@ const rawCollaborators = [
     salary: 11350.08,
     documentId: "201-290981-0002E",
   },
+  {
+    name: "Jader Josue Saenz Melgara",
+    salary: 11350.08,
+    documentId: "246-251192-0000E",
+    branch: "Masaya Gold",
+  },
+  {
+    name: "Marion Sarai Vargas Arguello",
+    salary: 11350.08,
+    documentId: "201-021099-1003S",
+    branch: "Masaya Gold",
+  },
+  {
+    name: "Carlos Feliciano Rocha Sanchez",
+    salary: 11350.08,
+    documentId: "201-220586-0069F",
+    branch: "Masaya Gold",
+  },
+  {
+    name: "Huber Alexander Obando Nurinda",
+    salary: 11350.08,
+    documentId: "401-011199-1001X",
+    branch: "Masaya Gold",
+  },
+  {
+    name: "Luis Beltran Paz Bonilla",
+    salary: 11350.08,
+    documentId: "202-290669-0002S",
+    branch: "Masaya Gold",
+  },
 ];
 
 export const DEFAULT_BRANCH = "Granada";
 
-const BRANCH_ORDER = [DEFAULT_BRANCH, "Nindiri"];
+const BRANCH_ORDER = [DEFAULT_BRANCH, "Nindiri", "Masaya Gold"];
 const LEGACY_DOCUMENT_ORDER_BEFORE_DAVID = [
   "201-191195-0002U",
   "201-211069-0003K",
