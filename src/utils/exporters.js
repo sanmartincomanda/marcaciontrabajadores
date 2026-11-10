@@ -1,9 +1,12 @@
 import ExcelJS from "exceljs";
 import * as XLSX from "xlsx";
 import {
+  getCollaboratorPaymentNote,
   getCompanyNameForBranch,
+  isBankPayrollEligible,
   normalizeDocumentId,
 } from "../data/collaborators";
+import { getBankPaymentRows } from "./payroll";
 import { formatDateLabel, getWeekEnd } from "./time";
 
 const BRAND = {
@@ -76,10 +79,6 @@ function padRight(value, length) {
 
 function buildBankDetailDescription(snapshot) {
   return `${BANK_PAYMENT_DETAIL_PREFIX} ${formatCompactDayMonth(snapshot.weekStart)} al ${formatCompactDayMonth(snapshot.weekEnd)}`;
-}
-
-function buildBankPaymentRows(snapshot) {
-  return snapshot.summaryRows.filter((row) => Number(row.totalPay || 0) > 0);
 }
 
 function triggerTextDownload(content, filename) {
@@ -580,16 +579,23 @@ async function createConsolidatedWorkbook(snapshot, options = {}) {
     const rowNumber = dataStartRow + index;
     const row = worksheet.getRow(rowNumber);
     row.getCell("A").value = index + 1;
-    row.getCell("B").value = item.collaborator.name;
+    const paymentNote = getCollaboratorPaymentNote(item.collaborator);
+    row.getCell("B").value = paymentNote
+      ? `${item.collaborator.name}\n${paymentNote}`
+      : item.collaborator.name;
     row.getCell("C").value = item.collaborator.documentId;
     row.getCell("D").value = item.totalWorkedHours;
     row.getCell("E").value = item.ordinaryHours;
     row.getCell("F").value = item.overtimeHours;
-    row.getCell("G").value = item.overtimeRate;
-    row.getCell("H").value = {
-      formula: `F${rowNumber}*G${rowNumber}`,
-      result: item.totalPay,
-    };
+    row.getCell("G").value = paymentNote ? null : item.overtimeRate;
+    row.getCell("H").value = isBankPayrollEligible(item.collaborator)
+      ? {
+          formula: paymentNote
+            ? `IF(ISNUMBER(G${rowNumber}),F${rowNumber}*G${rowNumber},"")`
+            : `F${rowNumber}*G${rowNumber}`,
+          result: paymentNote ? "" : item.totalPay,
+        }
+      : null;
     row.getCell("I").value = "";
     styleDataRow(row);
     row.getCell("B").alignment = { horizontal: "left", vertical: "middle", wrapText: true };
@@ -661,8 +667,11 @@ function addSlipDetailTable(worksheet, startRow, collaboratorDays) {
 }
 
 function addSlipSummary(worksheet, snapshot, summaryRow, collaboratorDays) {
+  const paymentNote = getCollaboratorPaymentNote(summaryRow.collaborator);
   worksheet.getCell("A7").value = "Colaborador";
-  worksheet.getCell("B7").value = summaryRow.collaborator.name;
+  worksheet.getCell("B7").value = paymentNote
+    ? `${summaryRow.collaborator.name}\n${paymentNote}`
+    : summaryRow.collaborator.name;
   worksheet.getCell("A8").value = "Cedula";
   worksheet.getCell("B8").value = summaryRow.collaborator.documentId;
   worksheet.getCell("A9").value = "Periodo";
@@ -679,9 +688,12 @@ function addSlipSummary(worksheet, snapshot, summaryRow, collaboratorDays) {
   worksheet.getCell("E9").value = "Horas Extras";
   worksheet.getCell("F9").value = { formula: `MAX(0,F7-48)`, result: summaryRow.overtimeHours };
   worksheet.getCell("E10").value = "Valor Hora Extra";
-  worksheet.getCell("F10").value = summaryRow.overtimeRate;
+  worksheet.getCell("F10").value = paymentNote ? null : summaryRow.overtimeRate;
   worksheet.getCell("E11").value = "Pago Horas Extras";
-  worksheet.getCell("F11").value = { formula: "F9*F10", result: summaryRow.totalPay };
+  worksheet.getCell("F11").value = {
+    formula: paymentNote ? 'IF(ISNUMBER(F10),F9*F10,"")' : "F9*F10",
+    result: paymentNote ? "" : summaryRow.totalPay,
+  };
 
   ["B7", "B8", "B9", "F7", "F8", "F9", "F10", "F11"].forEach((cellRef) => {
     const cell = worksheet.getCell(cellRef);
@@ -799,8 +811,13 @@ async function createSlipWorkbook(
   const logoId = await loadWorkbookLogo(workbook);
 
   const summaryRows = includeAllSheets
-    ? snapshot.summaryRows.filter((row) => row.recordCount > 0 || row.totalWorkedHours > 0)
-    : snapshot.summaryRows.filter((row) => row.collaborator.id === employeeId);
+    ? snapshot.summaryRows.filter((row) =>
+        isBankPayrollEligible(row.collaborator) &&
+        (row.recordCount > 0 || row.totalWorkedHours > 0)
+      )
+    : snapshot.summaryRows.filter((row) =>
+        isBankPayrollEligible(row.collaborator) && row.collaborator.id === employeeId
+      );
 
   for (const summaryRow of summaryRows) {
     const collaboratorDays = snapshot.dailySummaries.filter(
@@ -866,6 +883,10 @@ export async function exportIndividualSlipWorkbook(snapshot, employeeId) {
     return;
   }
 
+  if (!isBankPayrollEligible(summaryRow.collaborator)) {
+    throw new Error("Este colaborador tiene solo control de horas, sin colilla de pago.");
+  }
+
   const workbook = await createSlipWorkbook(snapshot, employeeId, false, {
     branch: summaryRow.collaborator.branch,
   });
@@ -898,7 +919,17 @@ export function exportBankPaymentFile(snapshot, options) {
     throw new Error("El numero de envio debe tener entre 1 y 5 digitos.");
   }
 
-  const rows = buildBankPaymentRows(snapshot);
+  const pendingSalaryRows = snapshot.summaryRows.filter(
+    (row) => isBankPayrollEligible(row.collaborator) &&
+      row.collaborator.salary == null && Number(row.overtimeHours || 0) > 0
+  );
+  if (pendingSalaryRows.length > 0) {
+    throw new Error(
+      `Falta definir el salario de: ${pendingSalaryRows.map((row) => row.collaborator.name).join(", ")}.`
+    );
+  }
+
+  const rows = getBankPaymentRows(snapshot);
   if (rows.length === 0) {
     throw new Error("No hay pagos para exportar al banco en esta semana.");
   }

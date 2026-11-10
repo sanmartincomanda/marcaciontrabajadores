@@ -6,7 +6,9 @@ import {
   collaborators,
   DEFAULT_BRANCH,
   getCollaboratorByClockCode,
+  getCollaboratorPaymentNote,
   getCompanyNameForBranch,
+  isBankPayrollEligible,
   normalizeDocumentId,
 } from "./data/collaborators";
 import {
@@ -19,6 +21,7 @@ import {
 import {
   buildDailyMarkingSnapshot,
   buildPayrollSnapshot,
+  getBankPaymentRows,
 } from "./utils/payroll";
 import {
   deleteRecordFromCloud,
@@ -702,6 +705,7 @@ function App() {
   const weekDates = buildWeekDates(settings.weekStart);
   const weeklyRecordsByCell = buildWeeklyRecordMap(records, settings.weekStart);
   const branchCollaborators = getBranchCollaborators(selectedBranch);
+  const branchPaymentCollaborators = branchCollaborators.filter(isBankPayrollEligible);
   const selectedBranchCompanyName = getCompanyNameForBranch(selectedBranch);
   const effectiveSelectedReportEmployeeId =
     selectedReportEmployeeId === "all" ||
@@ -710,11 +714,11 @@ function App() {
     )
       ? selectedReportEmployeeId
       : "all";
-  const effectiveSelectedSlipEmployeeId = branchCollaborators.some(
+  const effectiveSelectedSlipEmployeeId = branchPaymentCollaborators.some(
     (collaborator) => collaborator.id === selectedSlipEmployeeId
   )
     ? selectedSlipEmployeeId
-    : branchCollaborators[0]?.id ?? "";
+    : branchPaymentCollaborators[0]?.id ?? "";
   const effectiveManualEmployeeId = branchCollaborators.some(
     (collaborator) => collaborator.id === manualForm.employeeId
   )
@@ -774,17 +778,19 @@ function App() {
     branchCollaborators.some((collaborator) => collaborator.id === record.employeeId)
   ).length;
   const topWorkers = [...scopedPayroll.summaryRows]
+    .filter((row) => isBankPayrollEligible(row.collaborator))
     .sort((left, right) => right.totalPay - left.totalPay)
     .slice(0, 5);
   const selectedSlipSummary =
     scopedPayroll.summaryRows.find(
       (row) => row.collaborator.id === effectiveSelectedSlipEmployeeId
-    ) ?? scopedPayroll.summaryRows[0];
+    ) ?? scopedPayroll.summaryRows.find((row) => isBankPayrollEligible(row.collaborator));
   const selectedSlipDays = scopedPayroll.dailySummaries.filter(
     (day) => day.employeeId === selectedSlipSummary?.collaborator.id
   );
-  const bankPaymentRows = scopedPayroll.summaryRows.filter(
-    (row) => Number(row.totalPay || 0) > 0
+  const bankPaymentRows = getBankPaymentRows(scopedPayroll);
+  const hoursOnlyCollaborators = branchCollaborators.filter(
+    (collaborator) => !isBankPayrollEligible(collaborator)
   );
   const bankPaymentDetail = `${BANK_PAYMENT_DETAIL_PREFIX} ${formatCompactDayMonth(
     scopedPayroll.weekStart
@@ -1915,14 +1921,21 @@ function App() {
                     <tbody>
                       {scopedPayroll.summaryRows.map((row) => (
                         <tr key={row.collaborator.id}>
-                          <td>{row.collaborator.name}</td>
+                          <td>
+                            {row.collaborator.name}
+                            {getCollaboratorPaymentNote(row.collaborator) ? (
+                              <div className="cell-meta">
+                                {getCollaboratorPaymentNote(row.collaborator)}
+                              </div>
+                            ) : null}
+                          </td>
                           <td>{row.collaborator.documentId}</td>
                           <td>{row.dayCount}</td>
                           <td>{formatHours(row.totalWorkedHours)}</td>
                           <td>{formatHours(row.ordinaryHours)}</td>
                           <td>{formatHours(row.overtimeHours)}</td>
-                          <td>{formatCurrency(row.overtimeRate)}</td>
-                          <td>{formatCurrency(row.totalPay)}</td>
+                          <td>{getCollaboratorPaymentNote(row.collaborator) || formatCurrency(row.overtimeRate)}</td>
+                          <td>{getCollaboratorPaymentNote(row.collaborator) || formatCurrency(row.totalPay)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -2063,6 +2076,11 @@ function App() {
                             <span className="cell-meta">
                               {row.collaborator.documentId}
                             </span>
+                            {getCollaboratorPaymentNote(row.collaborator) ? (
+                              <span className="cell-meta">
+                                {getCollaboratorPaymentNote(row.collaborator)}
+                              </span>
+                            ) : null}
                           </td>
                           {row.days.map((day) => (
                             <td key={day.key}>
@@ -2558,6 +2576,12 @@ function App() {
                     />
                   </div>
 
+                  {hoursOnlyCollaborators.length > 0 ? (
+                    <p className="cell-meta">
+                      Solo control de horas, excluidos del archivo AAF6: {hoursOnlyCollaborators.map((collaborator) => collaborator.name).join(", ")}.
+                    </p>
+                  ) : null}
+
                   <button
                     type="button"
                     className="primary-button"
@@ -2573,7 +2597,7 @@ function App() {
                     value={effectiveSelectedSlipEmployeeId}
                     onChange={(event) => setSelectedSlipEmployeeId(event.target.value)}
                   >
-                    {branchCollaborators.map((collaborator) => (
+                    {branchPaymentCollaborators.map((collaborator) => (
                       <option key={collaborator.id} value={collaborator.id}>
                         {collaborator.name}
                       </option>
@@ -2761,7 +2785,7 @@ function App() {
                       />
                       <StatCard
                         label="Hora extra"
-                        value={formatCurrency(selectedSlipSummary.overtimeRate)}
+                        value={getCollaboratorPaymentNote(selectedSlipSummary.collaborator) || formatCurrency(selectedSlipSummary.overtimeRate)}
                         caption={selectedSlipSummary.collaborator.documentId}
                       />
                       <StatCard
@@ -2771,7 +2795,7 @@ function App() {
                       />
                       <StatCard
                         label="Total a pagar"
-                        value={formatCurrency(selectedSlipSummary.totalPay)}
+                        value={getCollaboratorPaymentNote(selectedSlipSummary.collaborator) || formatCurrency(selectedSlipSummary.totalPay)}
                         caption="Monto que saldra en la colilla"
                       />
                     </div>

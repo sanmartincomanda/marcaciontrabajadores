@@ -35,6 +35,7 @@ const rawCollaborators = [
     name: "Harvey Joffrey Mora Morales",
     salary: 11350.08,
     documentId: "201-180401-1000S",
+    active: false,
   },
   {
     name: "JORDIN ALEXANDER GOMEZ CASTILLO",
@@ -65,6 +66,7 @@ const rawCollaborators = [
     name: "Michael Alexander Perez Romero",
     salary: 11350.08,
     documentId: "201-131093-0004N",
+    active: false,
   },
   {
     name: "Nicol Yahoska Barbosa Rosales",
@@ -75,6 +77,7 @@ const rawCollaborators = [
     name: "Noel Alberto Hernandez Colomer",
     salary: 11350.08,
     documentId: "201-280591-0009E",
+    active: false,
   },
   {
     name: "Noel Omar Bendana Bermudez",
@@ -121,6 +124,22 @@ const rawCollaborators = [
     documentId: "202-290669-0002S",
     branch: "Masaya Gold",
   },
+  {
+    name: "Geesel Indira Granados Balmaceda",
+    salary: null,
+    documentId: "201-120675-0006K",
+  },
+  {
+    name: "Fabian Jose Noguera Garay",
+    salary: null,
+    documentId: "201-050106-1001T",
+  },
+  {
+    name: "HECTOR DANILO ESPINOZA TORRES",
+    salary: 0,
+    documentId: "201-291095-0003L",
+    bankPayrollEligible: false,
+  },
 ];
 
 export const DEFAULT_BRANCH = "Granada";
@@ -145,6 +164,33 @@ const LEGACY_DOCUMENT_ORDER_BEFORE_DAVID = [
   "201-290981-0002E",
 ];
 
+// Freeze historical positions so roster changes never reassign old records.
+const LEGACY_DOCUMENT_ORDER_AFTER_DAVID = [
+  "201-191195-0002U",
+  "201-211069-0003K",
+  "042-100586-0003V",
+  "201-050397-0002B",
+  "201-081198-1004T",
+  "201-220801-1003F",
+  "201-180401-1000S",
+  "888-230901-1001K",
+  "201-120298-1000P",
+  "001-230289-0010H",
+  "201-220999-1005G",
+  "201-190189-0007S",
+  "201-131093-0004N",
+  "201-080697-0005F",
+  "201-280591-0009E",
+  "201-140888-0007H",
+  "201-130989-0003C",
+  "201-290981-0002E",
+  "246-251192-0000E",
+  "201-021099-1003S",
+  "201-220586-0069F",
+  "401-011199-1001X",
+  "202-290669-0002S",
+];
+
 export function normalizeDocumentId(value) {
   return String(value ?? "")
     .toUpperCase()
@@ -160,6 +206,21 @@ export function getCompanyNameForBranch(branch) {
   return `Carnes San Martin ${normalizeBranchName(branch)}`;
 }
 
+export function isBankPayrollEligible(collaborator) {
+  return (
+    Boolean(collaborator) && collaborator.active !== false &&
+    collaborator.bankPayrollEligible !== false
+  );
+}
+
+export function getCollaboratorPaymentNote(collaborator) {
+  if (collaborator?.bankPayrollEligible === false) {
+    return "Solo control de horas";
+  }
+
+  return collaborator?.salary == null ? "Salario pendiente" : "";
+}
+
 export const SHORT_DOCUMENT_ID_LENGTH = 5;
 
 export function getShortDocumentId(value) {
@@ -171,7 +232,7 @@ export function getShortDocumentId(value) {
   return normalized.slice(-SHORT_DOCUMENT_ID_LENGTH);
 }
 
-export const collaborators = rawCollaborators.map((collaborator) => {
+const allCollaborators = rawCollaborators.map((collaborator) => {
   const normalizedDocumentId = normalizeDocumentId(collaborator.documentId);
 
   return {
@@ -182,6 +243,10 @@ export const collaborators = rawCollaborators.map((collaborator) => {
     normalizedDocumentId,
   };
 });
+
+export const collaborators = allCollaborators.filter(
+  (collaborator) => collaborator.active !== false
+);
 
 export const branches = Array.from(
   new Set(collaborators.map((collaborator) => collaborator.branch))
@@ -198,11 +263,11 @@ export const branches = Array.from(
 });
 
 export const collaboratorMap = Object.fromEntries(
-  collaborators.map((collaborator) => [collaborator.id, collaborator])
+  allCollaborators.map((collaborator) => [collaborator.id, collaborator])
 );
 
 export const collaboratorByDocumentId = Object.fromEntries(
-  collaborators.map((collaborator) => [
+  allCollaborators.map((collaborator) => [
     collaborator.normalizedDocumentId,
     collaborator,
   ])
@@ -221,11 +286,8 @@ const LEGACY_INDEX_TO_DOCUMENT_ID_BEFORE_DAVID = buildLegacyIndexMap(
   LEGACY_DOCUMENT_ORDER_BEFORE_DAVID
 );
 
-const LEGACY_INDEX_TO_DOCUMENT_ID_AFTER_DAVID = Object.fromEntries(
-  collaborators.map((collaborator, index) => [
-    `collaborator-${index + 1}`,
-    collaborator.normalizedDocumentId,
-  ])
+const LEGACY_INDEX_TO_DOCUMENT_ID_AFTER_DAVID = buildLegacyIndexMap(
+  LEGACY_DOCUMENT_ORDER_AFTER_DAVID
 );
 
 export const collaboratorByShortDocumentId = collaborators.reduce(
@@ -248,12 +310,13 @@ export function getCollaboratorByClockCode(value) {
     return null;
   }
 
-  return (
+  const collaborator =
     collaboratorByDocumentId[normalized] ??
     (normalized.length === SHORT_DOCUMENT_ID_LENGTH
       ? collaboratorByShortDocumentId[normalized] ?? null
-      : null)
-  );
+      : null);
+
+  return collaborator?.active === false ? null : collaborator;
 }
 
 export function resolveCollaboratorId(value) {

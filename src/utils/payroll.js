@@ -1,3 +1,4 @@
+import { isBankPayrollEligible } from "../data/collaborators";
 import {
   calculateWorkedHours,
   formatCompactHours,
@@ -35,6 +36,10 @@ function buildCollaboratorById(collaborators) {
 }
 
 function buildRates(collaborator, settings) {
+  if (!isBankPayrollEligible(collaborator)) {
+    return { ordinaryRate: 0, overtimeRate: 0 };
+  }
+
   const ordinaryRate = collaborator.salary / 30 / 8;
   const overtimeRate = ordinaryRate * Number(settings.overtimeMultiplier || 2);
 
@@ -47,6 +52,12 @@ function buildRates(collaborator, settings) {
 function getRecordSortTime(record, field = "checkIn") {
   const timeValue = record?.[field] || record?.checkIn || "00:00";
   return new Date(`${record.date}T${timeValue}:00`).getTime();
+}
+
+export function getBankPaymentRows(snapshot) {
+  return snapshot.summaryRows.filter(
+    (row) => isBankPayrollEligible(row.collaborator) && Number(row.totalPay || 0) > 0
+  );
 }
 
 function sortProcessedRecords(left, right) {

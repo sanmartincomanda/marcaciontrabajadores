@@ -16,6 +16,16 @@ Aplicacion web para calcular horas extras semanales por colaborador, registrar e
 - Guarda marcaciones y ajustes en Firebase Firestore en tiempo real.
 - Usa Firebase Authentication anonimo para conectar cada dispositivo.
 
+## Colaboradores y pagos
+
+- El catalogo de `src/data/collaborators.js` identifica a cada trabajador por cedula.
+- `active: false` retira al trabajador de marcacion, ingreso manual y pagos. Sus registros en Firestore y referencias historicas se conservan.
+- `bankPayrollEligible: false` permite controlar horas sin generar pago bancario AAF6 ni colillas. El consolidado identifica al trabajador como "Solo control de horas".
+- Un salario `null` queda identificado como "Salario pendiente". Si hay horas extras de ese trabajador, se debe definir su salario antes de descargar el PRN.
+- Las tablas de indices antiguos son historicas: no deben reordenarse al modificar la lista activa.
+
+Verificacion de colaboradores, calculos y descargas: `npm test`.
+
 ## Flujo de uso
 
 1. Define la semana, la jornada ordinaria semanal y el multiplicador de hora extra.
