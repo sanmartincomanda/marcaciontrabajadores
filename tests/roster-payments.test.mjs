@@ -37,7 +37,7 @@ const hectorId = "2012910950003L";
 const carlosId = "2012110690003K";
 const geeselId = "2011206750006K";
 const fabianId = "2010501061001T";
-const retiredIds = ["2011804011000S", "2012805910009E", "2011310930004N"];
+const retiredIds = ["2011804011000S", "2012805910009E", "2011310930004N", "2012208011003F"];
 
 function directHours(employeeId, hours = 16) {
   return {
@@ -71,15 +71,16 @@ async function captureDownload(t, action) {
   }
 }
 
-test("new Granada workers can clock using their cedula or last five characters", () => {
-  for (const [documentId, name] of [
-    ["201-120675-0006K", "Geesel Indira Granados Balmaceda"],
-    ["201-050106-1001T", "Fabian Jose Noguera Garay"],
-    ["201-291095-0003L", "HECTOR DANILO ESPINOZA TORRES"],
+test("new workers can clock in their branch using their cedula or last five characters", () => {
+  for (const [documentId, name, branch] of [
+    ["201-120675-0006K", "Geesel Indira Granados Balmaceda", "Granada"],
+    ["201-050106-1001T", "Fabian Jose Noguera Garay", "Granada"],
+    ["201-291095-0003L", "HECTOR DANILO ESPINOZA TORRES", "Granada"],
+    ["201-271296-1003B", "Yasser Daniel Diaz Altamirano", "Nindiri"],
   ]) {
     const collaborator = getCollaboratorByClockCode(documentId);
     assert.equal(collaborator.name, name);
-    assert.equal(collaborator.branch, "Granada");
+    assert.equal(collaborator.branch, branch);
     assert.equal(getCollaboratorByClockCode(documentId.slice(-5).toLowerCase()), collaborator);
   }
   assert.equal(collaborators.filter((worker) => worker.branch === "Nindiri").length, 2);

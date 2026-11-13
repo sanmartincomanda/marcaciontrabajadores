@@ -30,6 +30,13 @@ const rawCollaborators = [
     salary: 11350.08,
     documentId: "201-220801-1003F",
     branch: "Nindiri",
+    active: false,
+  },
+  {
+    name: "Yasser Daniel Diaz Altamirano",
+    salary: 11350.08,
+    documentId: "201-271296-1003B",
+    branch: "Nindiri",
   },
   {
     name: "Harvey Joffrey Mora Morales",
