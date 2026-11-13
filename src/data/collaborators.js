@@ -126,12 +126,12 @@ const rawCollaborators = [
   },
   {
     name: "Geesel Indira Granados Balmaceda",
-    salary: null,
+    salary: 11350.08,
     documentId: "201-120675-0006K",
   },
   {
     name: "Fabian Jose Noguera Garay",
-    salary: null,
+    salary: 11350.08,
     documentId: "201-050106-1001T",
   },
   {

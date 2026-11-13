@@ -35,6 +35,8 @@ const settings = {
 const bankOptions = { paymentDate: "2026-11-10", shipmentNumber: "71" };
 const hectorId = "2012910950003L";
 const carlosId = "2012110690003K";
+const geeselId = "2011206750006K";
+const fabianId = "2010501061001T";
 const retiredIds = ["2011804011000S", "2012805910009E", "2011310930004N"];
 
 function directHours(employeeId, hours = 16) {
@@ -130,23 +132,26 @@ test("Hector retains daily and weekly hours with no payment, even if salary chan
   assert.equal(daily.summaryRows.find((row) => row.employeeId === hectorId).totalWorkedHours, 10);
 });
 
-test("PRN excludes Hector and retired workers from detail, count and total", async (t) => {
-  const snapshot = buildPayrollSnapshot(collaborators, [directHours(carlosId)], settings);
+test("PRN pays Geesel and Fabian while excluding Hector and retired workers", async (t) => {
+  const paidIds = [carlosId, geeselId, fabianId];
+  const snapshot = buildPayrollSnapshot(
+    collaborators, paidIds.map((id) => directHours(id)), settings
+  );
   // A stale or manually adjusted positive payment must not bypass exclusion.
   snapshot.summaryRows.push(
     { collaborator: collaboratorMap[hectorId], totalPay: 777 },
     { collaborator: collaboratorMap[retiredIds[0]], totalPay: 333 },
   );
-  assert.equal(getBankPaymentRows(snapshot).length, 1);
+  assert.equal(getBankPaymentRows(snapshot).length, 3);
   const { blob, filename } = await captureDownload(t, () => exportBankPaymentFile(snapshot, bankOptions));
   const content = await blob.text();
   const lines = content.split("\r\n");
   assert.equal(filename, "INPAAF671.PRN");
-  assert.equal(lines.length, 2);
-  assert.equal(lines[0].slice(43, 56), "0000000151328");
-  assert.equal(lines[0].slice(56, 61), "00001");
-  assert.equal(lines[1].slice(10, 26).trim(), carlosId);
-  assert.equal(lines[1].slice(43, 56), "0000000151328");
+  assert.equal(lines.length, 4);
+  assert.equal(lines[0].slice(43, 56), "0000000453984");
+  assert.equal(lines[0].slice(56, 61), "00003");
+  assert.deepEqual(lines.slice(1).map((line) => line.slice(10, 26).trim()), paidIds);
+  assert.ok(lines.slice(1).every((line) => line.slice(43, 56) === "0000000151328"));
   assert.equal(content.includes(hectorId), false);
   assert.equal(content.includes(retiredIds[0]), false);
   assert.ok(lines.every((line) => line.length === 122));
@@ -154,14 +159,14 @@ test("PRN excludes Hector and retired workers from detail, count and total", asy
 });
 
 test("a missing salary is identified before downloading a bank file", () => {
-  const geesel = collaborators.find((worker) => worker.id === "2011206750006K");
-  const snapshot = buildPayrollSnapshot(collaborators, [directHours(geesel.id), directHours(carlosId)], settings);
-  assert.equal(geesel.salary, null);
+  const workers = collaborators.map((worker) =>
+    worker.id === geeselId ? { ...worker, salary: null } : worker
+  );
+  const snapshot = buildPayrollSnapshot(workers, [directHours(geeselId), directHours(carlosId)], settings);
   assert.throws(() => exportBankPaymentFile(snapshot, bankOptions), /Falta definir el salario de: Geesel/);
 });
 
 test("Excel keeps Hector's hours informative and omits his payment slip", async (t) => {
-  const geeselId = "2011206750006K";
   const snapshot = buildPayrollSnapshot(collaborators, [directHours(hectorId), directHours(carlosId), directHours(geeselId)], settings);
   const consolidated = await captureDownload(t, () => exportConsolidatedWorkbook(snapshot, { branch: "Granada" }));
   const workbook = new ExcelJS.Workbook();
@@ -177,17 +182,15 @@ test("Excel keeps Hector's hours informative and omits his payment slip", async 
   const carlos = rows.find((row) => row.getCell("C").value === "201-211069-0003K");
   assert.equal(carlos.getCell("H").value.formula, `F${carlos.number}*G${carlos.number}`);
   const geesel = rows.find((row) => row.getCell("C").value === "201-120675-0006K");
-  assert.match(geesel.getCell("B").value, /Salario pendiente/);
-  assert.equal(geesel.getCell("G").value, null);
-  assert.equal(geesel.getCell("H").value.formula, `IF(ISNUMBER(G${geesel.number}),F${geesel.number}*G${geesel.number},"")`);
+  assert.equal(geesel.getCell("G").value, 94.58);
+  assert.equal(geesel.getCell("H").value.result, 1513.28);
   const slips = await captureDownload(t, () => exportAllSlipsWorkbook(snapshot, { branch: "Granada" }));
   const slipWorkbook = new ExcelJS.Workbook();
   await slipWorkbook.xlsx.load(await slips.blob.arrayBuffer());
   assert.equal(slipWorkbook.worksheets.length, 2);
   assert.ok(slipWorkbook.worksheets.some((sheet) => sheet.name.includes("CARLOS")));
-  const pendingSlip = slipWorkbook.worksheets.find((sheet) => sheet.name.includes("Geesel"));
-  assert.match(pendingSlip.getCell("B7").value, /Salario pendiente/);
-  assert.equal(pendingSlip.getCell("F10").value, null);
-  assert.equal(pendingSlip.getCell("F11").value.formula, 'IF(ISNUMBER(F10),F9*F10,"")');
+  const geeselSlip = slipWorkbook.worksheets.find((sheet) => sheet.name.includes("Geesel"));
+  assert.equal(geeselSlip.getCell("F10").value, 94.58);
+  assert.equal(geeselSlip.getCell("F11").value.result, 1513.28);
   await assert.rejects(exportIndividualSlipWorkbook(snapshot, hectorId), /solo control de horas/);
 });
